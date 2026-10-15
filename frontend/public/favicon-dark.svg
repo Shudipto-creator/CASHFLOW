@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#CD7F32" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#CD7F32" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="32" height="32" rx="7" fill="#1C1917"/>
+
+  <!-- Border -->
+  <rect width="32" height="32" rx="7" fill="none" stroke="#CD7F32" stroke-width="1" stroke-opacity="0.45"/>
+
+  <!-- Inner glow -->
+  <rect x="4" y="4" width="24" height="24" rx="4" fill="url(#glow)"/>
+
+  <!-- C letterform as path, centered -->
+  <path
+    d="M20.2 10.5
+       C18.8 9.55 17.1 9 15.25 9
+       C10.69 9 7 12.58 7 17
+       C7 21.42 10.69 25 15.25 25
+       C17.1 25 18.8 24.45 20.2 23.5
+       L18.6 21.2
+       C17.65 21.87 16.5 22.25 15.25 22.25
+       C12.26 22.25 9.85 19.92 9.85 17
+       C9.85 14.08 12.26 11.75 15.25 11.75
+       C16.5 11.75 17.65 12.13 18.6 12.8
+       Z"
+    fill="#CD7F32"
+  />
+</svg>
