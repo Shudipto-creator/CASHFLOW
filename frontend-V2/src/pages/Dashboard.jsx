@@ -8,7 +8,7 @@ import {
 } from 'recharts';
 import LoadingSpinner from '../components/Common/LoadingSpinner';
 
-const COLORS = ['#1e3a8a', '#475569', '#64748b', '#94a3b8', '#cbd5e1'];
+const COLORS = ['#ff5a1f', '#ededea', '#a3a3a0', '#6b6b68', '#3a3a3a'];
 
 const formatDate = (iso) => {
   if (!iso) return 'N/A';

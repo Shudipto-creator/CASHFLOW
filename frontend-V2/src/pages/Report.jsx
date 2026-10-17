@@ -137,7 +137,7 @@ const Report = () => {
       </div>
 
       {report?.status === 'failed' && (
-        <div className="surface-card p-6 border-[var(--negative-color)] mb-6 bg-[rgba(185,28,28,0.05)]">
+        <div className="surface-card p-6 border-[var(--negative-color)] mb-6 bg-[rgba(248,113,113,0.05)]">
           <p className="font-mono text-[var(--negative-color)] text-sm tracking-wide">
             <span className="font-bold mr-2">!</span> Analysis failed. Please try again.
           </p>
@@ -242,11 +242,11 @@ const Report = () => {
                           className={`absolute top-0 right-0 px-2 py-1 font-mono text-[9px] tracking-widest uppercase font-bold
                           ${
                             action.priority === 'High' || action.priority === 1
-                              ? 'bg-[rgba(185,28,28,0.1)] text-[var(--negative-color)]'
+                              ? 'bg-[rgba(248,113,113,0.1)] text-[var(--negative-color)]'
                               : action.priority === 'Medium' ||
                                   action.priority === 2
-                                ? 'bg-[rgba(205,127,50,0.1)] text-[var(--primary-accent)]'
-                                : 'bg-[rgba(34,197,94,0.1)] text-[var(--positive-color)]'
+                                ? 'bg-[rgba(255,90,31,0.1)] text-[var(--primary-accent)]'
+                                : 'bg-[rgba(74,222,128,0.1)] text-[var(--positive-color)]'
                           }`}
                         >
                           Priority {action.priority}
@@ -325,10 +325,10 @@ const Report = () => {
                   <span
                     className={`inline-block px-4 py-1.5 border rounded-sm font-mono text-[10px] tracking-wider uppercase font-bold w-full ${
                       reportData.section_3_risk_alerts.risk_level === 'low'
-                        ? 'bg-[rgba(34,197,94,0.1)] border-[var(--positive-color)] text-[var(--positive-color)]'
+                        ? 'bg-[rgba(74,222,128,0.1)] border-[var(--positive-color)] text-[var(--positive-color)]'
                         : reportData.section_3_risk_alerts.risk_level === 'medium'
-                          ? 'bg-[rgba(205,127,50,0.1)] border-[var(--primary-accent)] text-[var(--primary-accent)]'
-                          : 'bg-[rgba(185,28,28,0.1)] border-[var(--negative-color)] text-[var(--negative-color)]'
+                          ? 'bg-[rgba(255,90,31,0.1)] border-[var(--primary-accent)] text-[var(--primary-accent)]'
+                          : 'bg-[rgba(248,113,113,0.1)] border-[var(--negative-color)] text-[var(--negative-color)]'
                     }`}
                   >
                     {reportData.section_3_risk_alerts.risk_level?.toUpperCase() || 'UNKNOWN'} RISK

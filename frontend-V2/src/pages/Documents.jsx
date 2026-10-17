@@ -144,7 +144,7 @@ const Documents = () => {
 
                 <button
                   onClick={() => handleDelete(doc.document_id)}
-                  className="font-mono text-[10px] tracking-wider uppercase text-[var(--negative-color)] hover:text-[#b91c1c] px-3 py-1 border border-transparent rounded-sm transition-colors"
+                  className="font-mono text-[10px] tracking-wider uppercase text-[var(--negative-color)] hover:opacity-80 px-3 py-1 border border-transparent rounded-sm transition-colors"
                 >
                   Delete
                 </button>

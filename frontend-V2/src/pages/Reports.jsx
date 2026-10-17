@@ -187,7 +187,7 @@ export default function Reports() {
           <div>
             <p className="font-mono text-[10px] tracking-wider text-[var(--text-muted)] uppercase mb-1">Status</p>
             <p className="font-mono text-sm">
-              <span className="inline-block px-3 py-1 border border-[var(--positive-color)] bg-[rgba(21,128,61,0.05)] text-[var(--positive-color)] rounded-sm uppercase text-[10px] tracking-wider font-medium">
+              <span className="inline-block px-3 py-1 border border-[var(--positive-color)] bg-[rgba(74,222,128,0.08)] text-[var(--positive-color)] rounded-sm uppercase text-[10px] tracking-wider font-medium">
                 {latestAnalysis.status}
               </span>
             </p>

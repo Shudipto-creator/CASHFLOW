@@ -129,7 +129,7 @@ const Analysis = () => {
                       className={`flex items-center space-x-3 p-3 border rounded-sm cursor-pointer transition-colors
                         ${
                           selectedDoc === doc.document_id
-                            ? 'border-[var(--primary-accent)] bg-[rgba(30,58,138,0.05)]'
+                            ? 'border-[var(--primary-accent)] bg-[rgba(255,90,31,0.08)]'
                             : 'border-[var(--border-color)] hover:border-[var(--text-muted)]'
                         }`}
                     >

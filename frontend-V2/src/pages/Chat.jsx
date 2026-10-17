@@ -246,7 +246,7 @@ const Chat = () => {
         ))}
 
         {error && (
-          <div className="p-4 border border-[var(--negative-color)] bg-[rgba(185,28,28,0.05)] rounded-sm">
+          <div className="p-4 border border-[var(--negative-color)] bg-[rgba(248,113,113,0.08)] rounded-sm">
             <p className="font-mono text-sm text-[var(--negative-color)]">{error}</p>
           </div>
         )}

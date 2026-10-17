@@ -62,13 +62,14 @@ const Register = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[var(--bg-color)]">
-      <div className="bg-white p-8 rounded-sm shadow-sm w-full max-w-md border border-[var(--border-color)]">
-        <h1 className="text-2xl font-bold text-[var(--text-primary)] text-center mb-6">Create a CASHFLOW account</h1>
+    <div className="grid-backdrop min-h-screen flex flex-col items-center justify-center gap-8 bg-[var(--bg-color)] px-6">
+      <Link to="/" className="flex items-center gap-2.5"><span className="flex h-6 w-6 items-center justify-center bg-[var(--primary-accent)] font-display text-base leading-none text-[#0a0a0a]">C</span><span className="font-display text-2xl leading-none tracking-wider text-[var(--text-primary)]">CASHFLOW</span></Link>
+      <div className="surface-card p-8 w-full max-w-md border border-[var(--border-color)]">
+        <h1 className="text-5xl text-[var(--text-primary)] text-center mb-8">Create a CASHFLOW account</h1>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Email</label>
+            <label className="block text-[11px] uppercase tracking-[0.15em] text-[var(--text-secondary)] mb-2">Email</label>
             <input
               type="email"
               name="email"
@@ -80,7 +81,7 @@ const Register = () => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Company Name</label>
+            <label className="block text-[11px] uppercase tracking-[0.15em] text-[var(--text-secondary)] mb-2">Company Name</label>
             <input
               type="text"
               name="company_name"
@@ -92,7 +93,7 @@ const Register = () => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Password</label>
+            <label className="block text-[11px] uppercase tracking-[0.15em] text-[var(--text-secondary)] mb-2">Password</label>
             <input
               type="password"
               name="password"
@@ -107,7 +108,7 @@ const Register = () => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">Confirm Password</label>
+            <label className="block text-[11px] uppercase tracking-[0.15em] text-[var(--text-secondary)] mb-2">Confirm Password</label>
             <input
               type="password"
               name="confirmPassword"
@@ -119,7 +120,7 @@ const Register = () => {
           </div>
 
           {error && (
-            <div className="bg-[#fef2f2] border border-[#fecaca] text-[#991b1b] px-4 py-2 rounded-sm text-sm">
+            <div className="border border-[var(--negative-color)] bg-[rgba(248,113,113,0.08)] text-[var(--negative-color)] px-4 py-2 text-sm">
               {error}
             </div>
           )}
@@ -127,7 +128,7 @@ const Register = () => {
           <button
             type="submit"
             disabled={loading}
-            className="btn-primary py-2 px-6 text-sm font-medium uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
+            className="btn-primary w-full py-3 px-6 text-sm font-medium uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Creating account...' : 'Create account'}
           </button>

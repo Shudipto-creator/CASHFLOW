@@ -1,12 +1,35 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Outlet, NavLink, Link, useNavigate } from "react-router-dom";
+import { Menu, X } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { useMode } from "../../context/ModeContext";
 
+const NAV_ITEMS = [
+  { to: "/dashboard", label: "Dashboard" },
+  { to: "/documents", label: "Documents" },
+  { to: "/analysis", label: "Analysis" },
+  { to: "/chat", label: "AI CFO" },
+  { to: "/reports", label: "Reports" },
+];
+
+const FALLBACK_MODES = [
+  { id: "aws", label: "AWS Mode" },
+  { id: "local", label: "Local Mode" },
+];
+
+function navClass({ isActive }) {
+  return `relative px-3 py-2 uppercase tracking-[0.15em] transition-colors ${
+    isActive
+      ? "text-[var(--text-primary)] after:absolute after:inset-x-3 after:-bottom-[13px] after:h-px after:bg-[var(--primary-accent)]"
+      : "text-[var(--nav-link-color)] hover:text-[var(--text-primary)]"
+  }`;
+}
+
 export default function ThemeLayout() {
-  const { user, logout } = useAuth();
+  const { user, logout, isAuthenticated } = useAuth();
   const { mode, modes, setMode, loading: modeLoading } = useMode();
   const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const handleLogout = () => {
     logout();
@@ -14,137 +37,99 @@ export default function ThemeLayout() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <nav
-        className="sticky top-0 z-10 h-14 flex items-center justify-between px-6 border-b"
-        style={{
-          backgroundColor: "var(--nav-bg)",
-          borderColor: "var(--nav-border)",
-        }}
+    <div className="flex min-h-screen flex-col bg-[var(--bg-color)]">
+      <header
+        className="sticky top-0 z-20 border-b backdrop-blur"
+        style={{ backgroundColor: "var(--nav-bg)", borderColor: "var(--nav-border)" }}
       >
-          <Link to="/" className="flex items-center space-x-3 text-decoration-none">
-            <div
-              className="w-8 h-8 flex items-center justify-center font-bold text-base"
-              style={{
-                border: "1px solid var(--primary-accent)",
-                color: "var(--primary-accent)",
-                backgroundColor: "var(--surface-card)",
-              }}
-            >
+        <nav className="mx-auto flex h-14 max-w-[1280px] items-center justify-between gap-6 px-6" aria-label="Main">
+          <Link to="/" className="flex items-center gap-2.5">
+            <span className="flex h-6 w-6 items-center justify-center bg-[var(--primary-accent)] font-display text-base leading-none text-[#0a0a0a]">
               C
-            </div>
-            <span
-              className="font-bold tracking-widest text-lg"
-              style={{ color: "var(--text-primary)" }}
-            >
+            </span>
+            <span className="font-display text-2xl leading-none tracking-wider text-[var(--text-primary)]">
               CASHFLOW
             </span>
           </Link>
 
-        <div className="hidden md:flex flex-1 justify-center space-x-2 font-mono text-[12px] tracking-wider">
-          <NavLink
-            to="/dashboard"
-            end
-            className={({ isActive }) =>
-              `px-5 py-2.5 transition-colors ${isActive ? "bg-[var(--surface-card)] shadow-sm rounded-sm" : ""}`
-            }
-            style={({ isActive }) =>
-              isActive
-                ? { color: "var(--primary-accent)" }
-                : { color: "var(--nav-link-color)" }
-            }
-          >
-            DASHBOARD
-          </NavLink>
-          <NavLink
-            to="/documents"
-            className={({ isActive }) =>
-              `px-5 py-2.5 transition-colors ${isActive ? "bg-[var(--surface-card)] shadow-sm rounded-sm" : ""}`
-            }
-            style={({ isActive }) =>
-              isActive
-                ? { color: "var(--primary-accent)" }
-                : { color: "var(--nav-link-color)" }
-            }
-          >
-            DOCUMENTS
-          </NavLink>
-          <NavLink
-            to="/analysis"
-            className={({ isActive }) =>
-              `px-5 py-2.5 transition-colors ${isActive ? "bg-[var(--surface-card)] shadow-sm rounded-sm" : ""}`
-            }
-            style={({ isActive }) =>
-              isActive
-                ? { color: "var(--primary-accent)" }
-                : { color: "var(--nav-link-color)" }
-            }
-          >
-            ANALYSIS
-          </NavLink>
-          <NavLink
-            to="/chat"
-            className={({ isActive }) =>
-              `px-5 py-2.5 transition-colors ${isActive ? "bg-[var(--surface-card)] shadow-sm rounded-sm" : ""}`
-            }
-            style={({ isActive }) =>
-              isActive
-                ? { color: "var(--primary-accent)" }
-                : { color: "var(--nav-link-color)" }
-            }
-          >
-            AI CFO
-          </NavLink>
-          <NavLink
-            to="/reports"
-            className={({ isActive }) =>
-              `px-5 py-2.5 transition-colors ${isActive ? "bg-[var(--surface-card)] shadow-sm rounded-sm" : ""}`
-            }
-            style={({ isActive }) =>
-              isActive
-                ? { color: "var(--primary-accent)" }
-                : { color: "var(--nav-link-color)" }
-            }
-          >
-            REPORTS
-          </NavLink>
-        </div>
+          <div className="hidden flex-1 justify-center text-[11px] md:flex">
+            {NAV_ITEMS.map((item) => (
+              <NavLink key={item.to} to={item.to} end className={navClass}>
+                {item.label}
+              </NavLink>
+            ))}
+          </div>
 
-        <div className="flex items-center space-x-4 text-sm font-mono">
-          <label className="flex items-center space-x-2 text-[var(--nav-link-color)]">
-            <span className="text-[10px] tracking-widest uppercase hidden sm:inline">Mode</span>
-            <select
-              value={mode}
-              disabled={modeLoading}
-              onChange={(e) => setMode(e.target.value)}
-              className="bg-[var(--surface-card)] border border-[var(--border-color)] text-[var(--text-primary)] text-[11px] tracking-wider px-2 py-1.5 focus:outline-none focus:border-[var(--primary-accent)]"
+          <div className="flex items-center gap-3 text-[11px]">
+            <label className="hidden items-center gap-2 text-[var(--nav-link-color)] sm:flex">
+              <span className="flex items-center gap-1.5 uppercase tracking-[0.15em]">
+                <span
+                  aria-hidden="true"
+                  className={`h-1.5 w-1.5 ${modeLoading ? "bg-[var(--text-muted)]" : "bg-[var(--positive-color)]"}`}
+                />
+                Mode
+              </span>
+              <select
+                value={mode}
+                disabled={modeLoading}
+                onChange={(e) => setMode(e.target.value)}
+                className="border border-[var(--border-color)] bg-[var(--surface-card)] px-2 py-1.5 uppercase tracking-wider text-[var(--text-primary)] focus:border-[var(--primary-accent)] focus:outline-none"
+              >
+                {(modes.length ? modes : FALLBACK_MODES).map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label || option.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {isAuthenticated ? (
+              <>
+                <span className="hidden max-w-[180px] truncate text-[var(--text-muted)] lg:block">{user?.email}</span>
+                <button
+                  onClick={handleLogout}
+                  className="btn-outline px-3 py-1.5 uppercase tracking-[0.15em]"
+                >
+                  Logout
+                </button>
+              </>
+            ) : (
+              <Link to="/login" className="btn-primary px-3 py-1.5 uppercase tracking-[0.15em]">
+                Login
+              </Link>
+            )}
+
+            <button
+              type="button"
+              className="p-1 text-[var(--text-primary)] md:hidden"
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-expanded={menuOpen}
+              aria-label={menuOpen ? "Close menu" : "Open menu"}
             >
-              {(modes.length
-                ? modes
-                : [
-                    { id: "aws", label: "AWS Mode" },
-                    { id: "local", label: "Local Mode" },
-                  ]
-              ).map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label || option.id}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className="hidden lg:block text-[var(--nav-link-color)] text-[12px] tracking-wider">
-            {user?.email || "Guest"}
-          </span>
-          <button
-            onClick={handleLogout}
-            className="px-4 py-1.5 border border-[var(--border-color)] text-[12px] tracking-wider text-[var(--nav-link-color)] bg-[var(--surface-card)] rounded-sm"
-          >
-            LOGOUT
-          </button>
-        </div>
-      </nav>
+              {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
+          </div>
+        </nav>
 
-      <main className="flex-1 max-w-[1280px] mx-auto px-6 w-full">
+        {menuOpen && (
+          <div className="flex flex-col border-t border-[var(--border-color)] px-6 py-3 text-xs md:hidden">
+            {NAV_ITEMS.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                onClick={() => setMenuOpen(false)}
+                className={({ isActive }) =>
+                  `py-2.5 uppercase tracking-[0.15em] ${isActive ? "text-[var(--primary-accent)]" : "text-[var(--nav-link-color)]"}`
+                }
+              >
+                {item.label}
+              </NavLink>
+            ))}
+          </div>
+        )}
+      </header>
+
+      <main className="mx-auto w-full max-w-[1280px] flex-1 px-6">
         <Outlet />
       </main>
     </div>
