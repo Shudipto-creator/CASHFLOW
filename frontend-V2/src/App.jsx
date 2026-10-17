@@ -4,6 +4,7 @@ import { AuthProvider } from './context/AuthContext';
 import { ModeProvider } from './context/ModeContext';
 import ProtectedRoute from './components/Common/ProtectedRoute';
 import ThemeLayout from './components/Layout/ThemeLayout';
+import DashboardLayout from './components/Layout/DashboardLayout';
 
 // Pages
 import Login from './pages/Login';
@@ -36,7 +37,7 @@ export default function App() {
             <Route
               element={
                 <ProtectedRoute>
-                  <ThemeLayout />
+                  <DashboardLayout />
                 </ProtectedRoute>
               }
             >
