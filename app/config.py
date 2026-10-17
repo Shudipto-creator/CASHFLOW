@@ -1,219 +1,72 @@
-"""Application configuration for CASHFLOW.
+"""Configuration management for CFOne application"""
 
-All settings come from environment variables, read once here and validated at
-startup. The app refuses to start with a clear message when a required value is
-missing or malformed (see config.validate()).
-"""
-
-from __future__ import annotations
-
-import os
-import secrets
-from functools import lru_cache
 from pathlib import Path
-from typing import List
+from pydantic.v1 import BaseSettings
+from functools import lru_cache
+from dotenv import load_dotenv
 
-from cryptography.fernet import Fernet
-from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
+# Load environment variables only from app/.env.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-
-def _env(name: str, default: str | None = None) -> str | None:
-    return os.environ.get(name, default)
-
+load_dotenv(BASE_DIR / "app" / ".env")
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
+    """Application settings loaded from environment variables"""
 
-    model_config = SettingsConfigDict(
-        env_file=str(BASE_DIR / ".env"), case_sensitive=False, extra="ignore"
-    )
+    # AWS Configuration
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_session_token: str = ""
+    aws_region: str = "us-east-1"
 
-    # --- Application ---
-    app_name: str = Field(default="CASHFLOW")
-    app_env: str = Field(default="development")  # development | production
-    debug: bool = Field(default=False)
-    secret_key: str = Field(default="")
-    site_url: str = Field(default="http://localhost:8000")
-    asset_version: str = Field(default="dev")
-    log_level: str = Field(default="INFO")
+    # Application Settings
+    app_env: str = "development"
+    debug: bool = True
+    secret_key: str = "CHANGE_ME_IN_PRODUCTION"  # Override in .env
+    jwt_expiration_hours: int = 24
+    jwt_algorithm: str = "HS256"
 
-    # --- Database ---
-    database_url: str = Field(default="sqlite:///./data/cashflow.db")
+    # Database
+    database_url: str = "sqlite:///./data/cfone.db"
 
-    # --- Sessions / cookies ---
-    cookie_secure: bool = Field(default=False)
-    session_cookie_name: str = Field(default="cf_session")
-    refresh_cookie_name: str = Field(default="cf_refresh")
-    csrf_cookie_name: str = Field(default="cf_csrf")
-    session_idle_days_signed_in: int = Field(default=14)
-    session_absolute_days_signed_in: int = Field(default=30)
-    session_idle_hours_guest: int = Field(default=24)
-    session_absolute_days_guest: int = Field(default=7)
+    # File Storage
+    upload_dir: str = "./uploads"
+    max_upload_size_mb: int = 10
+    allowed_extensions: list = ["pdf", "xlsx", "xls"]
 
-    # --- Field encryption ---
-    field_encryption_key: str = Field(default="")
+    # Vector Store
+    vector_store_path: str = "./data/vector_store"
 
-    # --- Auth ---
-    bcrypt_rounds: int = Field(default=12)
-    password_min_length: int = Field(default=12)
-    jwt_algorithm: str = Field(default="HS256")
-    jwt_access_expire_minutes: int = Field(default=15)
-    jwt_refresh_expire_days: int = Field(default=30)
-    login_rate_limit_per_minute: int = Field(default=5)
-    login_backoff_seconds: int = Field(default=30)
-    signup_rate_limit_per_hour: int = Field(default=10)
-    password_reset_rate_limit_per_hour: int = Field(default=5)
+    # API Server
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+    cors_origins: str = "http://localhost:5173,http://localhost:3000"
 
-    # --- Guest mode ---
-    guest_max_active: int = Field(default=500)
-    guest_start_rate_limit_per_ip_per_day: int = Field(default=5)
-    guest_upload_max_mb: int = Field(default=2)
-    guest_upload_max_rows: int = Field(default=5000)
-    guest_model_requests_per_day: int = Field(default=20)
+    # AWS Bedrock Models
+    nova_lite_model_id: str = "global.amazon.nova-2-lite-v1:0"
+    nova_sonic_model_id: str = "global.amazon.nova-2-sonic-v1:0"
+    nova_model_id: str = "global.amazon.nova-2-lite-v1:0"
+    embedding_model_id: str = "amazon.titan-embed-text-v2:0"
 
-    # --- LLM ---
-    llm_provider: str = Field(default="mock")
-    llm_model: str = Field(default="mock-model")
-    llm_base_url: str = Field(default="")
-    llm_api_key: str = Field(default="")
-    llm_timeout_seconds: int = Field(default=30)
-    llm_daily_budget_per_org: int = Field(default=100)
+    # Processing mode: "aws" (Bedrock) or "local" (sklearn + Ollama)
+    processing_mode: str = "aws"
 
-    # --- FX ---
-    frankfurter_base_url: str = Field(default="https://api.frankfurter.app")
-    fx_fallback_file: str = Field(default="app/data/fx_fallback.json")
+    # Ollama (local LLM chat layer)
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.2"
+    ollama_embed_model: str = "nomic-embed-text"
 
-    # --- Uploads ---
-    upload_dir: str = Field(default="./uploads")
-    max_upload_size_mb: int = Field(default=20)
-    document_max_size_mb: int = Field(default=20)
-    screenshot_max_size_mb: int = Field(default=5)
-    xlsx_max_uncompressed_mb: int = Field(default=100)
+    # Processing Settings
+    chunk_size_words: int = 500
+    chunk_overlap_words: int = 50
+    max_retries: int = 3
+    request_timeout_seconds: int = 60
 
-    # --- Email / SMTP ---
-    smtp_host: str = Field(default="")
-    smtp_port: int = Field(default=587)
-    smtp_user: str = Field(default="")
-    smtp_password: str = Field(default="")
-    smtp_from: str = Field(default="")
-    smtp_tls: bool = Field(default=True)
-
-    # --- Support / legal ---
-    support_email: str = Field(default="support@localhost")
-    security_email: str = Field(default="security@localhost")
-
-    # --- Scheduler ---
-    alert_interval_hours: int = Field(default=6)
-
-    # --- Site facts (content/site.json is the source; these are convenience) ---
-    legal_entity: str = Field(default="REPLACE_ME")
-    contact_email: str = Field(default="REPLACE_ME")
-    governing_law: str = Field(default="REPLACE_ME")
-    hosting_provider: str = Field(default="REPLACE_ME")
-    llm_provider_name: str = Field(default="REPLACE_ME")
-
-    @field_validator("secret_key")
-    @classmethod
-    def _check_secret_key(cls, v: str) -> str:
-        if not v:
-            raise ValueError("SECRET_KEY is required")
-        import base64
-
-        try:
-            raw = base64.b64decode(v, validate=True)
-        except Exception as exc:
-            raise ValueError("SECRET_KEY must be base64 encoded") from exc
-        if len(raw) < 32:
-            raise ValueError("SECRET_KEY must decode to at least 32 random bytes")
-        return v
-
-    @field_validator("field_encryption_key")
-    @classmethod
-    def _check_field_encryption_key(cls, v: str) -> str:
-        if not v:
-            raise ValueError("FIELD_ENCRYPTION_KEY is required")
-        for key in [k.strip() for k in v.split(",") if k.strip()]:
-            try:
-                Fernet(key.encode())
-            except Exception as exc:
-                raise ValueError(
-                    f"FIELD_ENCRYPTION_KEY contains an invalid Fernet key: {key}"
-                ) from exc
-        return v
-
-    @field_validator("database_url")
-    @classmethod
-    def _check_database_url(cls, v: str) -> str:
-        if not v:
-            raise ValueError("DATABASE_URL is required")
-        if not (
-            v.startswith("sqlite:///") or v.startswith("postgresql+") or v.startswith("postgres+")
-        ):
-            raise ValueError("DATABASE_URL must be sqlite:/// or postgresql+...")
-        return v
-
-    @field_validator("site_url")
-    @classmethod
-    def _check_site_url(cls, v: str) -> str:
-        if not v:
-            raise ValueError("SITE_URL is required")
-        if not (v.startswith("http://") or v.startswith("https://")):
-            raise ValueError("SITE_URL must start with http:// or https://")
-        return v.rstrip("/")
-
-    @field_validator("llm_provider")
-    @classmethod
-    def _check_llm_provider(cls, v: str) -> str:
-        if v not in ("mock", "bedrock", "openai_compatible"):
-            raise ValueError("LLM_PROVIDER must be mock, bedrock or openai_compatible")
-        return v
-
-    @model_validator(mode="after")
-    def _check_production_required(self) -> "Settings":
-        if self.app_env == "production":
-            missing: List[str] = []
-            for name in (
-                "site_url",
-                "secret_key",
-                "field_encryption_key",
-                "database_url",
-                "support_email",
-                "security_email",
-            ):
-                value = getattr(self, name)
-                if not value or value == "REPLACE_ME":
-                    missing.append(name.upper())
-            if missing:
-                raise ValueError("Missing required production settings: " + ", ".join(missing))
-        return self
-
-    def smtp_configured(self) -> bool:
-        return bool(self.smtp_host and self.smtp_user and self.smtp_password and self.smtp_from)
-
-    def encryption_keys(self) -> List[str]:
-        return [k.strip() for k in self.field_encryption_key.split(",") if k.strip()]
+    class Config:
+        env_file = "app/.env"
+        case_sensitive = False
 
 
 @lru_cache()
 def get_settings() -> Settings:
+    """Get cached settings instance"""
     return Settings()
-
-
-def generate_secret_key() -> str:
-    import base64
-
-    return base64.b64encode(secrets.token_bytes(32)).decode("ascii")
-
-
-def generate_fernet_key() -> str:
-    from cryptography.fernet import Fernet
-
-    return Fernet.generate_key().decode("ascii")
-
-
-def is_production(settings: Settings | None = None) -> bool:
-    s = settings or get_settings()
-    return s.app_env == "production"

@@ -1,111 +1,205 @@
-import React, { useState, useEffect } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext';
-import { Menu, X } from 'lucide-react';
-
-const groups = [
-  { title: 'Overview', items: [
-    { to: '/app', label: 'Dashboard', end: true },
-    { to: '/app/ask', label: 'Ask CASHFLOW' },
-    { to: '/app/scenarios', label: 'Scenarios' },
-    { to: '/app/alerts', label: 'Alerts' },
-  ]},
-  { title: 'Money', items: [
-    { to: '/app/financing', label: 'Financing' },
-    { to: '/app/approvals', label: 'Approvals', badge: 'pendingApprovals' },
-    { to: '/app/accounts', label: 'Accounts' },
-    { to: '/app/transactions', label: 'Transactions' },
-    { to: '/app/documents', label: 'Documents' },
-    { to: '/app/goals', label: 'Goals' },
-  ]},
-  { title: 'Trust', items: [
-    { to: '/app/audit', label: 'Audit log' },
-    { to: '/app/settings', label: 'Settings' },
-  ]},
-];
+import React, { useState, useEffect } from "react";
+import { Sun, Moon } from "lucide-react";
+import { Outlet, NavLink, useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
+import { useMode } from "../../context/ModeContext";
 
 export default function ThemeLayout() {
-  const { user } = useAuth();
+  const [isDark, setIsDark] = useState(true);
+  const { user, logout } = useAuth();
+  const { mode, modes, setMode, loading: modeLoading, local } = useMode();
   const navigate = useNavigate();
-  const [collapsed, setCollapsed] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [pendingCount, setPendingCount] = useState(0);
 
+  // Update favicon based on theme
+  const updateFavicon = (isDarkMode) => {
+    const favicon = document.getElementById("favicon");
+    if (favicon) {
+      favicon.href = isDarkMode ? "/favicon-dark.svg" : "/favicon-light.svg";
+    }
+  };
+
+  // Initialize theme from localStorage on component mount
   useEffect(() => {
-    const pref = localStorage.getItem('theme');
-    const isDark = pref === 'dark' || (pref === null && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    document.documentElement.classList.toggle('dark', isDark);
-    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    const savedTheme = localStorage.getItem("cfone-theme");
+    if (savedTheme === "light") {
+      setIsDark(false);
+      document.documentElement.classList.add("light");
+      updateFavicon(false);
+    } else {
+      setIsDark(true);
+      document.documentElement.classList.remove("light");
+      updateFavicon(true);
+    }
   }, []);
 
   const toggleTheme = () => {
-    const isDark = document.documentElement.classList.contains('dark');
-    document.documentElement.classList.toggle('dark', !isDark);
-    document.documentElement.setAttribute('data-theme', isDark ? 'light' : 'dark');
-    localStorage.setItem('theme', isDark ? 'light' : 'dark');
+    if (isDark) {
+      document.documentElement.classList.add("light");
+      localStorage.setItem("cfone-theme", "light");
+      setIsDark(false);
+      updateFavicon(false);
+    } else {
+      document.documentElement.classList.remove("light");
+      localStorage.setItem("cfone-theme", "dark");
+      setIsDark(true);
+      updateFavicon(true);
+    }
   };
 
-  const sidebar = (
-    <aside
-      className="flex flex-col h-full bg-surface border-r border-border"
-      style={{ width: collapsed ? 64 : 240, transition: 'color 120ms, background 120ms' }}
-    >
-      <div className="flex items-center justify-between p-4 border-b border-border">
-        <span className="font-serif tracking-[0.08em] font-semibold" style={{ fontSize: 16 }}>CASHFLOW</span>
-        <button className="btn btn-ghost" onClick={() => setCollapsed(!collapsed)} aria-label="collapse sidebar">
-          {collapsed ? '>' : '<'}
-        </button>
-      </div>
-      <nav className="flex-1 overflow-y-auto p-2" aria-label="main">
-        {groups.map((g) => (
-          <div key={g.title} className="mb-4">
-            {!collapsed && <div className="text-muted text-xs px-2 py-1 uppercase">{g.title}</div>}
-            {g.items.map((it) => (
-              <NavLink
-                key={it.to}
-                to={it.to}
-                end={it.end}
-                className={({ isActive }) =>
-                  'flex items-center justify-between px-2 py-2 rounded-md text-sm ' +
-                  (isActive ? 'bg-primary text-bg' : 'hover:bg-surface')
-                }
-              >
-                {!collapsed && <span>{it.label}</span>}
-                {it.badge === 'pendingApprovals' && pendingCount > 0 && (
-                  <span className="tag" style={{ background: 'var(--color-danger)', color: '#ffffff' }}>{pendingCount}</span>
-                )}
-              </NavLink>
-            ))}
-          </div>
-        ))}
-      </nav>
-      <div className="border-t border-border p-3">
-        {!collapsed && (
-          <div className="text-sm">
-            <div className="font-semibold">{user?.first_name || user?.email}</div>
-            {user?.organization_id && <div className="text-xs text-muted">Organization</div>}
-          </div>
-        )}
-        <button className="btn btn-ghost w-full mt-2" onClick={toggleTheme} aria-label="toggle theme">
-          {collapsed ? 'T' : 'Toggle theme'}
-        </button>
-      </div>
-    </aside>
-  );
+  const handleLogout = () => {
+    logout();
+    navigate("/login");
+  };
 
   return (
-    <div className="flex h-screen" style={{ background: 'var(--color-bg)' }}>
-      <button className="btn btn-ghost lg:hidden" style={{ position: 'absolute', top: 12, left: 12, zIndex: 50 }} onClick={() => setMobileOpen(true)}>
-        Menu
-      </button>
-      <div className="hidden lg:block">{sidebar}</div>
-      {mobileOpen && (
-        <div className="fixed inset-0 z-40 flex">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setMobileOpen(false)} />
-          <div className="relative">{sidebar}</div>
+    <div className="min-h-screen relative overflow-x-hidden pb-4">
+      <div className="scanlines"></div>
+      <div className="vignette"></div>
+
+      {/* Nav */}
+      <nav
+        className="sticky top-0 z-[90] h-14 flex items-center justify-between px-6 border-b"
+        style={{
+          backgroundColor: "var(--nav-bg)",
+          borderColor: "var(--nav-border)",
+        }}
+      >
+        <div className="flex items-center space-x-4">
+          <div
+            className="w-8 h-8 flex items-center justify-center font-mono font-bold text-base"
+            style={{
+              border: "1px solid var(--primary-accent)",
+              color: "var(--primary-accent)",
+              backgroundColor: "var(--surface-card)",
+            }}
+          >
+            C
+          </div>
+          <span
+            className="font-bold tracking-widest text-xl font-body"
+            style={{ color: "var(--text-primary)" }}
+          >
+            CFONE
+          </span>
         </div>
-      )}
-      <main className="flex-1 overflow-y-auto" style={{ maxWidth: 1280, margin: '0 auto', width: '100%' }}>
+
+        <div className="hidden md:flex flex-1 justify-center space-x-2 font-mono text-[12px] tracking-wider">
+          <NavLink
+            to="/"
+            end
+            className={({ isActive }) =>
+              `px-5 py-2.5 transition-colors ${isActive ? "shadow-sm rounded-sm" : ""}`
+            }
+            style={({ isActive }) =>
+              isActive
+                ? {
+                    backgroundColor: "var(--surface-card)",
+                    color: "var(--primary-accent)",
+                  }
+                : { color: "var(--nav-link-color)" }
+            }
+          >
+            DASHBOARD
+          </NavLink>
+          <NavLink
+            to="/documents"
+            className={({ isActive }) =>
+              `px-5 py-2.5 transition-colors ${isActive ? "shadow-sm rounded-sm" : ""}`
+            }
+            style={({ isActive }) =>
+              isActive
+                ? {
+                    backgroundColor: "var(--surface-card)",
+                    color: "var(--primary-accent)",
+                  }
+                : { color: "var(--nav-link-color)" }
+            }
+          >
+            DOCUMENTS
+          </NavLink>
+          <NavLink
+            to="/analysis"
+            className={({ isActive }) =>
+              `px-5 py-2.5 transition-colors ${isActive ? "shadow-sm rounded-sm" : ""}`
+            }
+            style={({ isActive }) =>
+              isActive
+                ? {
+                    backgroundColor: "var(--surface-card)",
+                    color: "var(--primary-accent)",
+                  }
+                : { color: "var(--nav-link-color)" }
+            }
+          >
+            ANALYSIS
+          </NavLink>
+          <NavLink
+            to="/reports"
+            className={({ isActive }) =>
+              `px-5 py-2.5 transition-colors ${isActive ? "shadow-sm rounded-sm" : ""}`
+            }
+            style={({ isActive }) =>
+              isActive
+                ? {
+                    backgroundColor: "var(--surface-card)",
+                    color: "var(--primary-accent)",
+                  }
+                : { color: "var(--nav-link-color)" }
+            }
+          >
+            REPORTS
+          </NavLink>
+        </div>
+
+        <div className="flex items-center space-x-6 text-sm font-mono">
+          <label className="flex items-center space-x-2 text-[var(--nav-link-color)]">
+            <span className="text-[10px] tracking-widest uppercase hidden sm:inline">Mode</span>
+            <select
+              value={mode}
+              disabled={modeLoading}
+              onChange={(e) => setMode(e.target.value)}
+              title={
+                mode === "local"
+                  ? local?.chat_ready === false
+                    ? "Local analysis ready; start Ollama for chat"
+                    : "Local sklearn + Ollama"
+                  : "AWS Bedrock Nova pipeline"
+              }
+              className="bg-[var(--surface-card)] border border-[var(--border-color)] text-[var(--text-primary)] text-[11px] tracking-wider px-2 py-1.5 focus:outline-none focus:border-[var(--primary-accent)]"
+            >
+              {(modes.length
+                ? modes
+                : [
+                    { id: "aws", label: "AWS Mode" },
+                    { id: "local", label: "Local Mode" },
+                  ]
+              ).map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label || option.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="hidden lg:block text-[var(--nav-link-color)] text-[12px] tracking-wider">
+            {user?.email || "Guest"}
+          </span>
+          <button
+            onClick={handleLogout}
+            className="px-4 py-1.5 border border-[var(--border-color)] hover:border-[var(--primary-accent)] transition-colors text-[12px] tracking-wider text-[var(--nav-link-color)] bg-[var(--surface-card)]"
+          >
+            LOGOUT
+          </button>
+          <button
+            onClick={toggleTheme}
+            className="w-8 h-8 flex items-center justify-center rounded-full bg-[var(--surface-card)] hover:scale-105 transition-transform"
+            style={{ color: "var(--nav-link-color)" }}
+          >
+            {isDark ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
+        </div>
+      </nav>
+
+      <main className="max-w-[1280px] mx-auto px-6 mt-5 relative z-10 w-full">
         <Outlet />
       </main>
     </div>

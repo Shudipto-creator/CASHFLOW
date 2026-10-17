@@ -1,1 +1,1 @@
-"""Service modules for CASHFLOW"""
+"""Service modules for CFOne"""

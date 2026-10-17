@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from "react";
 import { askCFO } from "../../services/api";
+import { useMode } from "../../context/ModeContext";
 
 /**
  * AskCFOChat Component
  *
- * Chat interface for CASHFLOW – CEO asks financial questions
+ * Chat interface for AgentCFO – CEO asks financial questions
  * about the generated report, gets CFO-level strategic guidance.
  *
  * Props:
@@ -12,11 +13,12 @@ import { askCFO } from "../../services/api";
  *   reportData  – Optional report data for display context
  */
 const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
+  const { mode, modes, setMode, loading: modeLoading } = useMode();
   const [messages, setMessages] = useState([
     {
       role: "assistant",
       content:
-        "Hello! I'm **CASHFLOW**, your financial advisor. Ask me anything about this report—cash runway, profit margins, funding strategy, expense optimization, or financial risks.",
+        "Hello! I'm **AgentCFO**, your financial advisor. Ask me anything about this report—cash runway, profit margins, funding strategy, expense optimization, or financial risks.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -204,6 +206,7 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
         voice_id: "Matthew",
         selected_text: activeSelectionContext?.text || undefined,
         selected_section: activeSelectionContext?.section || undefined,
+        processing_mode: mode,
       };
 
       const response = await askCFO(payload);
@@ -222,7 +225,7 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
       const errMsg =
         err.response?.data?.detail ||
         err.response?.data?.error?.message ||
-        "Failed to get CASHFLOW response. Please try again.";
+        "Failed to get AgentCFO response. Please try again.";
       setError(errMsg);
       setMessages((prev) => prev.slice(0, -1));
     } finally {
@@ -257,32 +260,63 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
       style={{ height: "700px", borderTop: "1px solid var(--border-color)" }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-color)] flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-sm bg-gradient-to-br from-[var(--primary-accent)] to-[var(--secondary-accent)] flex items-center justify-center">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-color)] flex-shrink-0 gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-8 h-8 rounded-sm bg-gradient-to-br from-[var(--primary-accent)] to-[var(--secondary-accent)] flex items-center justify-center flex-shrink-0">
             <span className="font-mono text-[10px] font-bold text-[var(--bg-color)]">
               CFO
             </span>
           </div>
-          <div>
+          <div className="min-w-0">
             <h2 className="font-display text-base font-semibold text-[var(--text-primary)]">
-              CASHFLOW
+              AgentCFO
             </h2>
             <p className="font-mono text-[9px] tracking-widest text-[var(--text-muted)] uppercase">
-              Financial Strategic Advisor
+              Financial Strategic Advisor ·{" "}
+              {mode === "local" ? "Ollama (Local)" : "AWS Nova"}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {isSpeaking && (
-            <span className="font-mono text-[9px] tracking-widest text-[var(--primary-accent)] uppercase">
-              Speaking
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <label className="flex items-center gap-2">
+            <span className="font-mono text-[9px] tracking-widest text-[var(--text-muted)] uppercase hidden sm:inline">
+              Mode
             </span>
-          )}
-          <span className="w-2 h-2 rounded-full bg-[var(--positive-color)] animate-pulse"></span>
-          <span className="font-mono text-[9px] tracking-widest text-[var(--text-muted)] uppercase">
-            Ready
-          </span>
+            <select
+              value={mode}
+              disabled={modeLoading || loading}
+              onChange={(e) => setMode(e.target.value)}
+              className="bg-transparent border border-[var(--border-color)] text-[var(--text-primary)] font-mono text-[11px] px-2 py-1.5 focus:outline-none focus:border-[var(--primary-accent)]"
+              title={
+                mode === "local"
+                  ? "Chat via Ollama (local LLM)"
+                  : "Chat via AWS Bedrock Nova"
+              }
+            >
+              {(modes.length
+                ? modes
+                : [
+                    { id: "aws", label: "AWS Mode" },
+                    { id: "local", label: "Local Mode" },
+                  ]
+              ).map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label || option.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex items-center gap-2">
+            {isSpeaking && (
+              <span className="font-mono text-[9px] tracking-widest text-[var(--primary-accent)] uppercase">
+                Speaking
+              </span>
+            )}
+            <span className="w-2 h-2 rounded-full bg-[var(--positive-color)] animate-pulse"></span>
+            <span className="font-mono text-[9px] tracking-widest text-[var(--text-muted)] uppercase">
+              Ready
+            </span>
+          </div>
         </div>
       </div>
 
@@ -384,7 +418,7 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask CASHFLOW... (Enter to send)"
+          placeholder="Ask AgentCFO... (Enter to send)"
           rows={2}
           disabled={loading}
           className="flex-1 resize-none bg-[var(--bg-color)] border border-[var(--border-color)] rounded-sm px-4 py-3 font-mono text-[12px] text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--primary-accent)] transition-colors disabled:opacity-50"

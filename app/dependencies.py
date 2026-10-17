@@ -1,62 +1,97 @@
-"""Request dependencies for CASHFLOW."""
+"""Shared dependencies for FastAPI routes"""
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
+from app.database import get_db
+from app.utils.auth import decode_access_token
+from app import models
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status, Request, Cookie, Header
-from sqlalchemy.orm import Session
-
-from app.database import SessionLocal, get_db
-from app import models
-from app.security import decode_token
-from app.config import get_settings, is_production
-
-settings = get_settings()
+security = HTTPBearer()
 
 
-def get_request_id(request: Request) -> str:
-    return getattr(request.state, "request_id", "unknown")
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)
+) -> models.User:
+    """
+    Dependency to get current authenticated user
 
+    Args:
+        credentials: JWT token from Authorization header
+        db: Database session
 
-def get_current_user_id(
-    request: Request,
-    session: Optional[str] = Cookie(default=None, alias=None),
-) -> str:
-    # Resolved per-router via get_current_user; kept for explicit use.
-    raise NotImplementedError("use get_current_user instead")
+    Returns:
+        User model instance
 
+    Raises:
+        HTTPException: If token is invalid or user not found
+    """
+    token = credentials.credentials
 
-def get_current_user(request: Request, db: Session = Depends(get_db)) -> models.User:
-    session_token = request.cookies.get(settings.session_cookie_name)
-    if not session_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    payload = decode_token(session_token)
-    if not payload or payload.get("type") != "access":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session")
-    user = db.query(models.User).filter(models.User.id == payload["sub"]).first()
-    if not user or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
-    request.state.user_id = user.id
-    request.state.user = user
+    # Decode token
+    payload = decode_access_token(token)
+
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Get user ID from payload
+    user_id: str = payload.get("sub")
+
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Get user from database
+    user = db.query(models.User).filter(models.User.user_id == user_id).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     return user
 
 
-def require_csrf(request: Request):
-    if request.method in ("GET", "HEAD", "OPTIONS"):
-        return
-    csrf_header = request.headers.get(settings.csrf_header_name)
-    csrf_cookie = request.cookies.get(settings.csrf_cookie_name)
-    if not csrf_header or not csrf_cookie:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF token missing")
-    from app.security import verify_csrf_token
-    if not verify_csrf_token(csrf_header, csrf_cookie):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF token invalid")
+def get_optional_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), db: Session = Depends(get_db)
+) -> Optional[models.User]:
+    """
+    Optional authentication - returns None if no valid token
 
+    Args:
+        credentials: JWT token from Authorization header (optional)
+        db: Database session
 
-def get_optional_user(request: Request, db: Session = Depends(get_db)):
-    try:
-        return get_current_user(request, db)
-    except HTTPException:
+    Returns:
+        User model instance or None
+    """
+    if not credentials:
         return None
 
+    try:
+        token = credentials.credentials
+        payload = decode_access_token(token)
 
-def is_production_flag() -> bool:
-    return is_production()
+        if not payload:
+            return None
+
+        user_id: str = payload.get("sub")
+
+        if not user_id:
+            return None
+
+        user = db.query(models.User).filter(models.User.user_id == user_id).first()
+        return user
+
+    except:
+        return None

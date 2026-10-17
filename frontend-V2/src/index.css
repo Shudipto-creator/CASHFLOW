@@ -1,0 +1,144 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Corporate design system - no gradients, no animations, no scanlines, no vignette */
+:root {
+  --bg-color: #ffffff;
+  --surface-card: #f8fafc;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --primary-accent: #1e3a8a;
+  --secondary-accent: #475569;
+  --border-color: #e2e8f0;
+  --nav-bg: #ffffff;
+  --nav-border: #e2e8f0;
+  --nav-link-color: #334155;
+  --positive-color: #15803d;
+  --negative-color: #b91c1c;
+  --cmd-line-color: #1e3a8a;
+}
+
+html.light {
+  --bg-color: #ffffff;
+  --surface-card: #f8fafc;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --primary-accent: #1e3a8a;
+  --secondary-accent: #475569;
+  --border-color: #e2e8f0;
+  --nav-bg: #ffffff;
+  --nav-border: #e2e8f0;
+  --nav-link-color: #334155;
+  --positive-color: #15803d;
+  --negative-color: #b91c1c;
+  --cmd-line-color: #1e3a8a;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+}
+
+.font-mono {
+  font-family: "Inter", monospace;
+}
+
+.font-display {
+  font-family: "Inter", sans-serif;
+}
+
+.font-body {
+  font-family: "Inter", sans-serif;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-color);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+/* Surface Card - clean, no hover lift, rectangular */
+.surface-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+/* Corporate Button - rectangular, no pill, no hover lift */
+.btn-primary {
+  background: var(--primary-accent);
+  border: 1px solid var(--primary-accent);
+  color: #ffffff;
+  border-radius: 4px;
+  transition: none;
+}
+
+.btn-primary:hover {
+  background: #153575;
+  border-color: #153575;
+  transform: none;
+}
+
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: 4px;
+  transition: none;
+}
+
+.btn-outline:hover {
+  border-color: var(--primary-accent);
+  color: var(--primary-accent);
+  transform: none;
+}
+
+.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  border-radius: 4px;
+  transition: none;
+}
+
+.btn-secondary:hover {
+  border-color: var(--primary-accent);
+  color: var(--primary-accent);
+  transform: none;
+}
+
+/* Input field styling */
+.input-field {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-color);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  transition: none;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--primary-accent);
+}

@@ -1,155 +1,162 @@
-"""CASHFLOW FastAPI application: middleware, error pages, routers."""
-
-from __future__ import annotations
-
+"""FastAPI main application for CFOne"""
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
+from app.config import get_settings
+from app.database import init_db
+from app.middleware.cors import setup_cors
+from app.middleware.error_handler import http_exception_handler, general_exception_handler
+from app.routers import auth, documents, analysis, ask_cfo, dashboard, settings as settings_router
+from app.services.llm_factory import get_embedding_client, get_llm_client
+from app.services.mode_service import get_processing_mode
+from app.services.embeddings import VectorStore
+from datetime import datetime
 import logging
-import time
-from contextlib import asynccontextmanager
-from pathlib import Path
+import os
 
-from fastapi import FastAPI, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from starlette.exceptions import HTTPException as StarletteHTTPException
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+)
 
-from app.config import get_settings, is_production
-from app.db import engine, init_db, get_db
-from app.middleware.request_id import RequestIdMiddleware
-from app.middleware.security_headers import SecurityHeadersMiddleware
-from app.templating import render
-
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
-
-class _SafeFormatter(logging.Formatter):
-    def formatMessage(self, record: logging.LogRecord) -> str:
-        if not hasattr(record, "request_id"):
-            record.request_id = "-"
-        return super().formatMessage(record)
-
-
-_log_format = '{"timestamp":"%(asctime)s","level":"%(levelname)s","name":"%(name)s","request_id":"%(request_id)s","message":"%(message)s"}'
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper(), logging.INFO),
-    format=_log_format,
-    datefmt="%Y-%m-%dT%H:%M:%SZ",
-    force=True,
-)
-for _handler in logging.getLogger().handlers:
-    _handler.setFormatter(_SafeFormatter(_log_format, datefmt="%Y-%m-%dT%H:%M:%SZ"))
-logger = logging.getLogger("cashflow")
-
-
-def _request_id(request: Request) -> str:
-    return getattr(request.state, "request_id", "unknown")
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Starting CASHFLOW application", extra={"request_id": "bootstrap"})
-    init_db()
-    logger.info("Database initialized")
-    yield
-    logger.info("Shutting down CASHFLOW application")
-
-
+# Create FastAPI app
 app = FastAPI(
-    title="CASHFLOW",
-    description="Cash flow copilot for SMEs",
+    title="CFOne API",
+    description="AI Chief Financial Officer for small and medium enterprises",
     version="1.0.0",
-    docs_url=None if is_production() else "/docs",
-    redoc_url=None if is_production() else "/redoc",
-    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
 
-app.add_middleware(RequestIdMiddleware)
-app.add_middleware(SecurityHeadersMiddleware)
+# Setup CORS
+setup_cors(app)
 
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "app" / "static")), name="static")
+# Add exception handlers
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(Exception, general_exception_handler)
 
-
-@app.middleware("http")
-async def logging_middleware(request: Request, call_next):
-    start = time.time()
-    response = await call_next(request)
-    duration_ms = int((time.time() - start) * 1000)
-    logger.info(
-        "%s %s -> %s in %dms",
-        request.method,
-        request.url.path,
-        response.status_code,
-        duration_ms,
-        extra={"request_id": _request_id(request)},
-    )
-    return response
-
-
-# Import routers after app creation to avoid circular imports.
-from app.routers import (  # noqa: E402
-    public,
-    auth,
-    accounts,
-    analysis,
-    approvals,
-    ask_cfo,
-    audit,
-    counterparts,
-    dashboard,
-    documents,
-    financing,
-    forecasts,
-    goals,
-    invoices,
-    organizations,
-    settings as settings_router,
-    support,
-    transactions,
-)
-
-app.include_router(public.router)
+# Include routers
 app.include_router(auth.router)
-app.include_router(accounts.router)
-app.include_router(analysis.router)
-app.include_router(approvals.router)
-app.include_router(ask_cfo.router)
-app.include_router(audit.router)
-app.include_router(counterparts.router)
-app.include_router(dashboard.router)
 app.include_router(documents.router)
-app.include_router(financing.router)
-app.include_router(forecasts.router)
-app.include_router(goals.router)
-app.include_router(invoices.router)
-app.include_router(organizations.router)
+app.include_router(analysis.router)
+app.include_router(ask_cfo.router)
+app.include_router(dashboard.router)
 app.include_router(settings_router.router)
-app.include_router(support.router)
-app.include_router(transactions.router)
 
 
-@app.get("/healthz")
-async def healthz():
-    from sqlalchemy import text
+@app.on_event("startup")
+async def startup_event():
+    """Initialize application on startup"""
+    logger.info("Starting CFOne application...")
 
-    with next(get_db()) as db:
-        db.execute(text("SELECT 1"))
-    return {"status": "ok", "version": "1.0.0"}
+    # Create required directories
+    os.makedirs("data", exist_ok=True)
+    os.makedirs("data/vector_store", exist_ok=True)
+    os.makedirs("uploads", exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
+
+    # Initialize database
+    logger.info("Initializing database...")
+    init_db()
+
+    logger.info("CFOne application started successfully")
 
 
-@app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-    if exc.status_code == 404:
-        return render(request, "errors/404.html", title="Page not found", status_code=404)
-    if exc.status_code == 403:
-        return render(request, "errors/403.html", title="Forbidden", status_code=403)
-    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    logger.info("Shutting down CFOne application...")
 
 
-@app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception):
-    logger.error(
-        "Unhandled error: %r", exc, extra={"request_id": _request_id(request)}, exc_info=True
+@app.get("/api/health")
+async def health_check():
+    """
+    Check API health status
+
+    Returns:
+        Health status information
+    """
+    active_mode = get_processing_mode()
+
+    # Check active LLM provider
+    llm_status = "unknown"
+    try:
+        llm_client = get_llm_client(active_mode)
+        if llm_client.check_connection():
+            llm_status = "connected"
+        else:
+            llm_status = "disconnected"
+    except Exception:
+        llm_status = "error"
+
+    # Keep AWS probe for visibility even in local mode
+    bedrock_status = "unknown"
+    try:
+        aws_client = get_llm_client("aws")
+        bedrock_status = "connected" if aws_client.check_connection() else "disconnected"
+    except Exception:
+        bedrock_status = "error"
+
+    ollama_status = "unknown"
+    try:
+        local_client = get_llm_client("local")
+        ollama_status = "connected" if local_client.check_connection() else "disconnected"
+    except Exception:
+        ollama_status = "error"
+
+    # Check vector store
+    vector_store_status = "unknown"
+    try:
+        embedding_client = get_embedding_client(active_mode)
+        vector_store = VectorStore(embedding_client)
+        if vector_store.check_connection():
+            vector_store_status = "connected"
+        else:
+            vector_store_status = "disconnected"
+    except Exception:
+        vector_store_status = "error"
+
+    # Check database
+    database_status = "unknown"
+    try:
+        from app.database import engine
+
+        with engine.connect() as conn:
+            database_status = "connected"
+    except Exception:
+        database_status = "error"
+
+    return JSONResponse(
+        content={
+            "status": "healthy",
+            "version": "1.0.0",
+            "timestamp": datetime.utcnow().isoformat(),
+            "processing_mode": active_mode,
+            "services": {
+                "database": database_status,
+                "llm": llm_status,
+                "aws_bedrock": bedrock_status,
+                "ollama": ollama_status,
+                "vector_store": vector_store_status,
+            },
+        }
     )
-    return render(request, "errors/500.html", title="Server error", status_code=500)
+
+
+@app.get("/")
+async def root():
+    """Root endpoint"""
+    return {
+        "message": "CFOne API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/api/health",
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host=settings.api_host, port=settings.api_port)

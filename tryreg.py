@@ -1,1 +1,0 @@
-import requests; r=requests.post('http://localhost:8000/api/auth/register', json={'email':'test@test.com','password':'StrongPassword123!','organization_name':'ACME','country':'US','base_currency':'USD','timezone':'UTC','locale':'en-US'}); print('status', r.status_code); print('body', r.text)

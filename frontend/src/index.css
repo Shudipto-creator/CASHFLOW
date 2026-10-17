@@ -1,138 +1,250 @@
-@import "@fontsource-variable/inter/wght.css";
-@import "@fontsource-variable/source-serif-4/wght.css";
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600;1,700&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Dark Mode (default) */
 :root {
-  --color-bg: #F7F8FA;
-  --color-surface: #FFFFFF;
-  --color-border: #E3E6EB;
-  --color-text: #0F1B2D;
-  --color-muted: #5B6778;
-  --color-primary: #12263F;
-  --color-primary-hover: #0B1A2E;
-  --color-accent: #1F6F6B;
-  --color-positive: #1E7A4F;
-  --color-warning: #A15C07;
-  --color-danger: #B3261E;
-  --color-info: #1F4E79;
-  --font-sans: 'Inter Variable', 'Inter', system-ui, -apple-system, sans-serif;
-  --font-serif: 'Source Serif 4 Variable', 'Source Serif 4', Georgia, serif;
-  --font-mono: 'ui-monospace', 'SFMono-Regular', 'Consolas', monospace;
-  --radius-md: 6px;
-  --radius-card: 10px;
+  --bg-color: #0f0d0b;
+  --surface-card: #1a1612;
+  --text-primary: #e8dcc8;
+  --text-secondary: #d4c5ad;
+  --text-muted: #8b7e6a;
+  --primary-accent: #cd7f32;
+  --secondary-accent: #a8692a;
+  --border-color: #2d2416;
+  --nav-bg: rgba(15, 13, 11, 0.95);
+  --nav-border: #2d2416;
+  --nav-link-color: #e8b923;
+  --ticker-up: #00ff41;
+  --ticker-down: #f87171;
+  --scanline-display: block;
+  --positive-color: #00ff41;
+  --cmd-line-color: #cd7f32;
+  --electric-green: #00ff41;
 }
 
-.dark, [data-theme="dark"], html.dark {
-  --color-bg: #0E141B;
-  --color-surface: #151C25;
-  --color-border: #243040;
-  --color-text: #E8ECF1;
-  --color-muted: #9AA6B5;
-  --color-primary: #E8ECF1;
-  --color-primary-hover: #C8CDD4;
-  --color-accent: #4FA8A2;
-  --color-positive: #1E7A4F;
-  --color-warning: #A15C07;
-  --color-danger: #B3261E;
-  --color-info: #1F4E79;
+/* Light Mode */
+html.light {
+  --bg-color: #fff5f0;
+  --surface-card: #ffffff;
+  --text-primary: #2d1810;
+  --text-secondary: #5a3825;
+  --text-muted: #8b6f5c;
+  --primary-accent: #d64545;
+  --secondary-accent: #e85d3c;
+  --border-color: #f0ddd5;
+  --nav-bg: rgba(255, 245, 240, 0.95);
+  --nav-border: #f0ddd5;
+  --nav-link-color: #5a3825;
+  --ticker-up: #c44536;
+  --ticker-down: #ef4444;
+  --scanline-display: none;
+  --positive-color: #c44536;
+  --cmd-line-color: #c44536;
+  --electric-green: #c44536;
 }
-
-html, body { margin: 0; padding: 0; }
 
 body {
-  font-family: var(--font-sans);
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-size: 14px;
-  line-height: 1.5;
-  font-variant-numeric: tabular-nums;
+  margin: 0;
+  font-family:
+    "IBM Plex Sans",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    "Roboto",
+    "Oxygen",
+    "Ubuntu",
+    "Cantarell",
+    "Fira Sans",
+    "Droid Sans",
+    "Helvetica Neue",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
 }
 
-h1, h2 { font-family: var(--font-serif); font-weight: 500; }
-h1 { font-size: 40px; }
-h2 { font-size: 28px; }
-h3 { font-size: 20px; }
-h4 { font-size: 16px; }
+.font-mono {
+  font-family: "IBM Plex Mono", "Courier New", monospace;
+}
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    transition: none !important;
-    animation: none !important;
+.font-display {
+  font-family: "Playfair Display", serif;
+}
+
+.font-body {
+  font-family: "IBM Plex Sans", sans-serif;
+}
+
+.fade-delay-2 {
+  animation-delay: 0.2s;
+}
+
+.fade-delay-3 {
+  animation-delay: 0.3s;
+}
+
+.fade-delay-4 {
+  animation-delay: 0.4s;
+}
+
+.fade-delay-5 {
+  animation-delay: 0.5s;
+}
+
+.fade-delay-6 {
+  animation-delay: 0.6s;
+}
+
+/* Theming transition */
+* {
+  transition:
+    background-color 0.3s ease,
+    color 0.3s ease,
+    border-color 0.3s ease;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-color);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+/* Scanlines and Vignette for Dark Mode */
+.scanlines {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 999;
+  background: repeating-linear-gradient(
+    rgba(205, 127, 50, 0.03),
+    rgba(205, 127, 50, 0.03) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  display: var(--scanline-display);
+  animation: scanlineFlicker 8s infinite;
+}
+
+.vignette {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 998;
+  background: radial-gradient(
+    circle,
+    transparent 50%,
+    rgba(15, 13, 11, 0.8) 150%
+  );
+  display: var(--scanline-display);
+}
+
+@keyframes scanlineFlicker {
+  0% {
+    opacity: 0.9;
+  }
+
+  5% {
+    opacity: 0.8;
+  }
+
+  10% {
+    opacity: 0.9;
+  }
+
+  90% {
+    opacity: 0.9;
+  }
+
+  95% {
+    opacity: 0.6;
+  }
+
+  100% {
+    opacity: 0.9;
   }
 }
 
-.tabular { font-variant-numeric: tabular-nums; }
-
-*:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+/* Fade Up Animation */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-.btn {
-  height: 36px;
-  font-size: 14px;
-  border-radius: 6px;
-  border: 1px solid transparent;
-  padding: 0 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  transition: background-color 120ms, color 120ms, border-color 120ms;
-}
-.btn-primary { background: var(--color-primary); color: var(--color-bg); }
-.btn-primary:hover { background: var(--color-primary-hover); }
-.dark .btn-primary, [data-theme="dark"] .btn-primary { color: var(--color-bg); background: var(--color-primary); }
-
-.btn-secondary { background: transparent; border-color: var(--color-border); color: var(--color-text); }
-.btn-secondary:hover { background: var(--color-surface); }
-
-.btn-ghost { background: transparent; color: var(--color-muted); }
-.btn-ghost:hover { background: var(--color-surface); color: var(--color-text); }
-
-.btn-destructive { background: var(--color-danger); color: #FFFFFF; }
-
-.card {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  padding: 16px;
+.animate-fade-up {
+  animation: fadeUp 0.6s ease-out forwards;
+  opacity: 0;
 }
 
-input, select, textarea {
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-text);
-  padding: 8px 10px;
-  font-size: 14px;
-  width: 100%;
-  box-sizing: border-box;
-}
-input:focus, select:focus, textarea:focus {
-  border-color: var(--color-accent);
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+/* Blink Animation */
+@keyframes blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
 }
 
-.tag {
-  border-radius: 6px;
-  font-size: 12px;
-  padding: 2px 8px;
-  border: 1px solid var(--color-border);
-  display: inline-block;
+.animate-blink {
+  animation: blink 1s infinite;
 }
 
-table.app-table { width: 100%; border-collapse: collapse; }
-.app-table th, .app-table td { padding: 8px 12px; font-size: 14px; border-bottom: 1px solid var(--color-border); }
-.app-table th { color: var(--color-muted); font-weight: 600; font-size: 12px; text-transform: uppercase; }
+/* Button Styles */
+.btn-select {
+  background: transparent;
+  border: 1px solid var(--primary-accent);
+  color: var(--primary-accent);
+  transition: all 0.3s ease;
+}
 
-.skeleton { background: var(--color-border); border-radius: 4px; animation: none; min-height: 8px; }
+.btn-select:hover {
+  background: var(--primary-accent);
+  color: var(--bg-color);
+  transform: translateY(-2px);
+}
 
-@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
-.modal-fade { animation: fade 160ms ease; }
-/* hide any shadows except modals */
-.modal, .menu { box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+.btn-generate {
+  background: var(--secondary-accent);
+  border: 1px solid var(--secondary-accent);
+  color: var(--bg-color);
+  transition: all 0.3s ease;
+}
+
+.btn-generate:hover {
+  background: var(--primary-accent);
+  border-color: var(--primary-accent);
+  transform: translateY(-2px);
+}
+
+/* Surface Card */
+.surface-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-color);
+}

@@ -513,12 +513,12 @@ const Report = () => {
         </div>
       )}
 
-      {/* Ask CASHFLOW Chat – only show when analysis is completed */}
+      {/* Ask AgentCFO Chat – only show when analysis is completed */}
       {report?.status === "completed" && reportData && (
         <div ref={chatSectionRef} className="mt-8">
           <div className="mb-6 border-b border-[var(--border-color)] pb-4">
             <h2 className="font-display text-2xl text-[var(--text-primary)] tracking-wide mb-2">
-              Ask CASHFLOW
+              Ask AgentCFO
             </h2>
             <p className="font-mono text-[10px] tracking-widest text-[var(--text-muted)] uppercase">
               Get strategic CFO-level financial guidance on your report
@@ -546,7 +546,7 @@ const Report = () => {
             left: `${selectionAction.left}px`,
           }}
         >
-          Ask CASHFLOW
+          Ask AgentCFO
         </button>
       )}
     </div>

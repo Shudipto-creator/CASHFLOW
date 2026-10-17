@@ -1,1 +1,1 @@
-"""Routers package for CASHFLOW."""
+"""API router modules"""
