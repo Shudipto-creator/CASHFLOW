@@ -49,6 +49,7 @@ class Analysis(Base):
     analysis_id = Column(String(36), primary_key=True, default=generate_uuid)
     user_id = Column(String(36), ForeignKey("users.user_id"), nullable=False, index=True)
     status = Column(String(20), nullable=False, index=True)  # processing/completed/failed
+    processing_mode = Column(String(20), nullable=True, default="aws")  # aws | local
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     error_message = Column(Text, nullable=True)

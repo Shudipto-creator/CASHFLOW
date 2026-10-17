@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { askCFO } from "../../services/api";
+import { useMode } from "../../context/ModeContext";
 
 /**
  * AskCFOChat Component
@@ -12,6 +13,7 @@ import { askCFO } from "../../services/api";
  *   reportData  – Optional report data for display context
  */
 const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
+  const { mode, modes, setMode, loading: modeLoading } = useMode();
   const [messages, setMessages] = useState([
     {
       role: "assistant",
@@ -204,6 +206,7 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
         voice_id: "Matthew",
         selected_text: activeSelectionContext?.text || undefined,
         selected_section: activeSelectionContext?.section || undefined,
+        processing_mode: mode,
       };
 
       const response = await askCFO(payload);
@@ -257,32 +260,63 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
       style={{ height: "700px", borderTop: "1px solid var(--border-color)" }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-color)] flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-sm bg-gradient-to-br from-[var(--primary-accent)] to-[var(--secondary-accent)] flex items-center justify-center">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-color)] flex-shrink-0 gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-8 h-8 rounded-sm bg-gradient-to-br from-[var(--primary-accent)] to-[var(--secondary-accent)] flex items-center justify-center flex-shrink-0">
             <span className="font-mono text-[10px] font-bold text-[var(--bg-color)]">
               CFO
             </span>
           </div>
-          <div>
+          <div className="min-w-0">
             <h2 className="font-display text-base font-semibold text-[var(--text-primary)]">
               AgentCFO
             </h2>
             <p className="font-mono text-[9px] tracking-widest text-[var(--text-muted)] uppercase">
-              Financial Strategic Advisor
+              Financial Strategic Advisor ·{" "}
+              {mode === "local" ? "Ollama (Local)" : "AWS Nova"}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {isSpeaking && (
-            <span className="font-mono text-[9px] tracking-widest text-[var(--primary-accent)] uppercase">
-              Speaking
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <label className="flex items-center gap-2">
+            <span className="font-mono text-[9px] tracking-widest text-[var(--text-muted)] uppercase hidden sm:inline">
+              Mode
             </span>
-          )}
-          <span className="w-2 h-2 rounded-full bg-[var(--positive-color)] animate-pulse"></span>
-          <span className="font-mono text-[9px] tracking-widest text-[var(--text-muted)] uppercase">
-            Ready
-          </span>
+            <select
+              value={mode}
+              disabled={modeLoading || loading}
+              onChange={(e) => setMode(e.target.value)}
+              className="bg-transparent border border-[var(--border-color)] text-[var(--text-primary)] font-mono text-[11px] px-2 py-1.5 focus:outline-none focus:border-[var(--primary-accent)]"
+              title={
+                mode === "local"
+                  ? "Chat via Ollama (local LLM)"
+                  : "Chat via AWS Bedrock Nova"
+              }
+            >
+              {(modes.length
+                ? modes
+                : [
+                    { id: "aws", label: "AWS Mode" },
+                    { id: "local", label: "Local Mode" },
+                  ]
+              ).map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label || option.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex items-center gap-2">
+            {isSpeaking && (
+              <span className="font-mono text-[9px] tracking-widest text-[var(--primary-accent)] uppercase">
+                Speaking
+              </span>
+            )}
+            <span className="w-2 h-2 rounded-full bg-[var(--positive-color)] animate-pulse"></span>
+            <span className="font-mono text-[9px] tracking-widest text-[var(--text-muted)] uppercase">
+              Ready
+            </span>
+          </div>
         </div>
       </div>
 

@@ -84,6 +84,7 @@ class DocumentUploadResponse(BaseModel):
 class AnalysisRequest(BaseModel):
     document_ids: Optional[List[str]] = None
     analysis_type: Optional[str] = "full"  # "full" or "quick"
+    processing_mode: Optional[str] = None  # "aws" | "local" (defaults to app setting)
 
 
 class AnalysisResponse(BaseModel):
@@ -91,6 +92,7 @@ class AnalysisResponse(BaseModel):
     status: str
     estimated_completion: Optional[datetime] = None
     message: str
+    processing_mode: Optional[str] = None
 
 
 class AnalysisStatus(BaseModel):
@@ -100,6 +102,7 @@ class AnalysisStatus(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime]
     document_count: int
+    processing_mode: Optional[str] = None
 
 
 class AnalysisListResponse(BaseModel):

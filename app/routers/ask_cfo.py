@@ -9,8 +9,9 @@ from typing import List, Optional
 from app.database import get_db
 from app import models
 from app.dependencies import get_current_user
-from app.services.nova_client import NovaClient
 from app.services.embeddings import VectorStore
+from app.services.llm_factory import get_embedding_client, get_llm_client
+from app.services.mode_service import resolve_mode
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["ask-cfo"])
@@ -29,12 +30,14 @@ class AskCFORequest(BaseModel):
     voice_id: str = "Matthew"
     selected_text: Optional[str] = None
     selected_section: Optional[str] = None
+    processing_mode: Optional[str] = None  # "aws" | "local"
 
 
 class AskCFOResponse(BaseModel):
     answer: str
     audio_base64: Optional[str] = None
     audio_mime_type: Optional[str] = None
+    processing_mode: Optional[str] = None
 
 
 # =====================================================================
@@ -75,6 +78,9 @@ Tone:
 - Advisory (like addressing a CEO in a board meeting)
 - Data-driven and fact-based
 - Focused on practical outcomes
+
+Greeting:
+If the user greets you (e.g., "hello", "hi", "good morning", "hey"), respond with a brief professional greeting and offer to help with financial analysis questions. Do not provide unsolicited financial insights for a greeting.
 
 Risk detection:
 If the question relates to financial risks (low runway, high debt, low margin, etc.), always highlight the risk level and severity.
@@ -216,7 +222,7 @@ def _retrieve_analysis_chunks(
     current_user: models.User,
     analysis_id: str,
     query_text: str,
-    nova: NovaClient,
+    embedding_client,
 ) -> List[dict]:
     """Retrieve analysis-scoped evidence chunks for a selected-text follow-up."""
     associations = (
@@ -230,7 +236,7 @@ def _retrieve_analysis_chunks(
         return []
 
     try:
-        vector_store = VectorStore(nova)
+        vector_store = VectorStore(embedding_client)
         results = vector_store.search_similar(
             query=query_text,
             top_k=12,
@@ -294,14 +300,30 @@ async def ask_cfo(
     # Get the financial report data
     report = db.query(models.Report).filter(models.Report.analysis_id == request.analysis_id).first()
     financial_report = report.report_data if report else {}
-    
+
+    # Prefer request override → analysis mode → global setting
+    analysis_mode = getattr(analysis, "processing_mode", None)
+    mode = resolve_mode(request.processing_mode or analysis_mode)
+
+    # Handle simple greetings directly without invoking the LLM
+    GREETING_WORDS = {
+        "hello", "hi", "hey", "good morning", "good afternoon",
+        "good evening", "hi there", "hello there", "greetings",
+    }
+    if request.question.strip().lower() in GREETING_WORDS:
+        return AskCFOResponse(
+            answer="Hello! I am AgentCFO, your AI Chief Financial Officer. I can help you analyze financial reports, review cash flow, assess risks, and answer questions about your business finances. Upload a document and run an analysis to get started.",
+            processing_mode=mode,
+        )
+
     try:
-        nova = NovaClient()
+        llm_client = get_llm_client(mode)
+        embedding_client = get_embedding_client(mode)
     except Exception as exc:
-        logger.error(f"Failed to initialize Nova client for ask-cfo: {exc}", exc_info=True)
+        logger.error(f"Failed to initialize LLM client for ask-cfo ({mode}): {exc}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service temporarily unavailable. Please try again.",
+            detail=f"AI service temporarily unavailable ({mode} mode). Please try again.",
         )
 
     selected_text = request.selected_text.strip() if request.selected_text else None
@@ -311,7 +333,7 @@ async def ask_cfo(
         current_user=current_user,
         analysis_id=request.analysis_id,
         query_text=retrieval_query,
-        nova=nova,
+        embedding_client=embedding_client,
     ) if selected_text else []
 
     # Build prompt with context injection
@@ -324,18 +346,22 @@ async def ask_cfo(
         retrieved_chunks=retrieved_chunks,
     )
     
-    # Call Nova Pro with AgentCFO system prompt
+    # Call LLM (Nova or Ollama) with AgentCFO system prompt
     try:
-        logger.info(f"Invoking Nova model for ask-cfo with question: {request.question[:100]}...")
-        result = nova.invoke_agent(
+        logger.info(
+            "Invoking %s model for ask-cfo with question: %s...",
+            mode,
+            request.question[:100],
+        )
+        result = llm_client.invoke_agent(
             prompt=prompt,
             system_prompt=AGENTCFO_SYSTEM_PROMPT,
             temperature=0.5,
             max_tokens=1500,
         )
-        logger.info(f"Nova response received: {str(result)[:200]}...")
+        logger.info(f"Ask-cfo response received ({mode}): {str(result)[:200]}...")
     except Exception as exc:
-        logger.error(f"Nova Pro call failed in ask-cfo: {exc}", exc_info=True)
+        logger.error(f"LLM call failed in ask-cfo ({mode}): {exc}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI service temporarily unavailable. Please try again.",
@@ -355,8 +381,8 @@ async def ask_cfo(
             # Try other common response keys
             answer = result.get("answer") or result.get("text")
         if not answer and len(result) > 0:
-            # Last resort: return first value if dict is not empty
-            answer = str(list(result.values())[0])
+            # Last resort: serialize full dict instead of first value only
+            answer = json.dumps(result)
     else:
         answer = str(result)
     
@@ -370,9 +396,9 @@ async def ask_cfo(
     audio_base64 = None
     audio_mime_type = None
 
-    if request.voice_response:
+    if request.voice_response and mode == "aws":
         try:
-            voice_result = nova.synthesize_speech_with_sonic(
+            voice_result = llm_client.synthesize_speech_with_sonic(
                 text=answer,
                 voice_id=request.voice_id,
                 audio_format="mp3",
@@ -385,9 +411,10 @@ async def ask_cfo(
         except Exception as voice_exc:
             logger.warning("Voice synthesis failed, returning text only: %s", str(voice_exc))
 
-    logger.info(f"AgentCFO response generated successfully: {len(answer)} chars")
+    logger.info(f"AgentCFO response generated successfully: {len(answer)} chars (mode={mode})")
     return AskCFOResponse(
         answer=answer,
         audio_base64=audio_base64,
         audio_mime_type=audio_mime_type,
+        processing_mode=mode,
     )

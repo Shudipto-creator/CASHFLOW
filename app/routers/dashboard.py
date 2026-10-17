@@ -10,7 +10,8 @@ from datetime import datetime, timedelta
 from app.database import get_db
 from app import models
 from app.dependencies import get_current_user
-from app.services.nova_client import NovaClient
+from app.services.llm_factory import get_llm_client
+from app.services.mode_service import get_processing_mode
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -649,21 +650,22 @@ Guidelines:
 - Always output valid JSON"""
     
     try:
-        logger.info(f"Generating insights for analysis {request.analysis_id}")
-        nova = NovaClient()
+        mode = get_processing_mode()
+        logger.info(f"Generating insights for analysis {request.analysis_id} (mode={mode})")
+        llm_client = get_llm_client(mode)
         
-        result = nova.invoke_agent(
+        result = llm_client.invoke_agent(
             prompt=chart_summary,
             system_prompt=system_prompt,
             temperature=0.3,  # Lower temperature for more consistent financial analysis
             max_tokens=2000,
         )
         
-        logger.info(f"Nova response received: {result}")
+        logger.info(f"Insights LLM response received ({mode}): {result}")
         
-        # Handle error responses from Nova
+        # Handle error responses from LLM
         if isinstance(result, dict) and "error" in result:
-            logger.error(f"Nova error: {result['error']}")
+            logger.error(f"LLM error ({mode}): {result['error']}")
             # Return default insights on error
             return InsightResponse(
                 top_insights=[
@@ -681,7 +683,7 @@ Guidelines:
                     "Monitor burn rate trends",
                     "Assess revenue sustainability"
                 ],
-                generated_by="Amazon Nova 2 Lite (Manual Fallback)",
+                generated_by="Manual Fallback" if mode == "local" else "Amazon Nova 2 Lite (Manual Fallback)",
             )
         
         # Extract insights data
@@ -719,7 +721,7 @@ Guidelines:
             top_insights=top_insights,
             risks=risks,
             recommendations=recommendations,
-            generated_by="Amazon Nova 2 Lite",
+            generated_by="Ollama (Local)" if mode == "local" else "Amazon Nova 2 Lite",
         )
         
     except Exception as exc:
@@ -741,5 +743,5 @@ Guidelines:
                 "Monitor expense growth",
                 "Track runway metrics"
             ],
-            generated_by="Amazon Nova 2 Lite (Fallback)",
+            generated_by="Insight Fallback",
         )

@@ -85,4 +85,11 @@ export const generateDashboardInsights = (data) =>
 export const checkHealth = () =>
   api.get('/api/health');
 
+// Processing mode (aws | local)
+export const getProcessingMode = () =>
+  api.get('/api/settings/mode');
+
+export const setProcessingMode = (mode) =>
+  api.put('/api/settings/mode', { mode });
+
 export default api;

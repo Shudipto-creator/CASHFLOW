@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { getDocuments, getAnalyses, runAnalysis } from "../services/api";
 import LoadingSpinner from "../components/Common/LoadingSpinner";
+import { useMode } from "../context/ModeContext";
 
 const Analysis = () => {
   const [documents, setDocuments] = useState([]);
@@ -10,6 +11,7 @@ const Analysis = () => {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const navigate = useNavigate();
+  const { mode, modes, setMode, loading: modeLoading } = useMode();
 
   useEffect(() => {
     fetchData();
@@ -43,9 +45,12 @@ const Analysis = () => {
       const response = await runAnalysis({
         document_ids: [selectedDoc],
         analysis_type: "full",
+        processing_mode: mode,
       });
 
-      alert("Analysis started! You will be notified when complete.");
+      alert(
+        `Analysis started in ${mode === "local" ? "Local" : "AWS"} mode! You will be notified when complete.`,
+      );
       navigate(`/report/${response.data.analysis_id}`);
     } catch (error) {
       alert(error.response?.data?.error?.message || "Failed to start analysis");
@@ -77,6 +82,35 @@ const Analysis = () => {
           <h2 className="font-display text-2xl font-semibold mb-6 text-[var(--text-primary)]">
             Run New Analysis
           </h2>
+
+          <div className="mb-6">
+            <label className="block font-mono text-[9px] tracking-widest text-[var(--text-muted)] mb-2 uppercase">
+              Processing Mode
+            </label>
+            <select
+              value={mode}
+              disabled={modeLoading || running}
+              onChange={(e) => setMode(e.target.value)}
+              className="w-full bg-transparent border border-[var(--border-color)] text-[var(--text-primary)] font-mono text-sm px-3 py-2 focus:outline-none focus:border-[var(--primary-accent)]"
+            >
+              {(modes.length
+                ? modes
+                : [
+                    { id: "aws", label: "AWS Mode" },
+                    { id: "local", label: "Local Mode" },
+                  ]
+              ).map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label || option.id}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 font-mono text-[10px] text-[var(--text-muted)] leading-relaxed">
+              {mode === "local"
+                ? "Local: sklearn document classifier + rule/ML analyzer. Chat uses Ollama."
+                : "AWS: Bedrock Nova agents, Titan embeddings, and Sonic TTS."}
+            </p>
+          </div>
 
           {documents.length === 0 ? (
             <p className="text-[var(--text-secondary)] font-mono text-sm">
@@ -120,7 +154,9 @@ const Analysis = () => {
                 disabled={running || !selectedDoc}
                 className="w-full bg-primary text-white py-2 rounded hover:bg-blue-700 disabled:bg-gray-400"
               >
-                {running ? "Starting Analysis..." : "Start Analysis"}
+                {running
+                  ? "Starting Analysis..."
+                  : `Start Analysis (${mode === "local" ? "Local" : "AWS"})`}
               </button>
             </>
           )}
@@ -150,6 +186,11 @@ const Analysis = () => {
                       </p>
                       <p className="font-mono text-sm font-semibold text-[var(--text-primary)]">
                         {analysis.document_count} document(s)
+                      </p>
+                      <p className="font-mono text-[10px] text-[var(--text-muted)] mt-1 uppercase tracking-wider">
+                        {(analysis.processing_mode || "aws") === "local"
+                          ? "Local mode"
+                          : "AWS mode"}
                       </p>
                     </div>
 
