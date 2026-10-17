@@ -1,0 +1,36 @@
+{% extends "base_app.html" %}
+{% block sidebar %}
+  <nav class="sidebar-nav" style="margin-top:var(--space-12);">
+    <a href="/app" class="nav-item">Dashboard</a>
+    <a href="/app/forecasts" class="nav-item">Forecasts</a>
+    <a href="/app/documents" class="nav-item nav-item--active">Documents</a>
+    <a href="/app/ask" class="nav-item">Ask CASHFLOW</a>
+    <a href="/app/settings" class="nav-item">Settings</a>
+  </nav>
+  <div class="sidebar-footer" style="margin-top:auto;padding:var(--space-8);border-top:1px solid var(--color-border);">
+    <form method="post" action="{{ site_url }}/api/auth/logout" style="margin:0;">
+      {{ button("Sign out", variant="ghost", extra_class="w-full") }}
+    </form>
+  </div>
+{% endblock %}
+{% block app_header %}
+  <div class="app-header-title">
+    <h1>Documents</h1>
+    <p class="app-header-sub">Upload and manage your financial documents</p>
+  </div>
+  <div class="app-header-actions">
+    <button id="theme-toggle" class="btn btn--ghost" aria-label="Toggle theme">&#x2601;</button>
+  </div>
+{% endblock %}
+{% block content %}
+<div class="card">
+  <form method="post" action="{{ site_url }}/api/documents/upload" enctype="multipart/form-data" data-lock>
+    <input type="file" name="file" accept=".pdf,.xlsx,.xls,.csv" required>
+    {{ button("Upload document", variant="primary") }}
+  </form>
+</div>
+
+<div class="empty-state" style="margin-top:var(--space-16);">
+  <p>No documents uploaded yet. Upload a PDF or Excel file to get started.</p>
+</div>
+{% endblock %}

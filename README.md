@@ -1,6 +1,6 @@
 ﻿<div align="center">
 
-# CFOne
+# CASHFLOW
 
 ### Autonomous AI Chief Financial Officer for SMEs
 
@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/ChromaDB-Vector%20Store-8B5CF6?style=for-the-badge" />
 </p>
 
-> CFOne turns raw financial documents into actionable intelligence through a pipeline of five AI agents powered by AWS Bedrock.
+> CASHFLOW forecasts your cash, finds the cheapest way to cover a gap, and asks you before it acts.
 
 </div>
 
@@ -34,7 +34,7 @@
 ## Project Structure
 
 ```
-CFOne/
+CASHFLOW/
 ├── app/
 │   ├── agents/
 │   │   ├── base_agent.py               # Shared agent base class
@@ -104,8 +104,8 @@ CFOne/
 ### 1 — Clone
 
 ```bash
-git clone https://github.com/your-username/cfone.git
-cd cfone
+git clone https://github.com/your-username/cashflow.git
+cd cashflow
 ```
 
 ### 2 — Backend
@@ -189,7 +189,7 @@ SECRET_KEY=
 JWT_EXPIRATION_HOURS=24
 
 # Database
-DATABASE_URL=sqlite:///./data/cfone.db
+DATABASE_URL=sqlite:///./data/cashflow.db
 
 # Storage
 UPLOAD_DIR=./uploads
@@ -223,4 +223,4 @@ EMBEDDING_MODEL_ID=amazon.titan-embed-text-v2:0
 
 ## License
 
-Copyright © 2026 CFOne. All rights reserved.
+Copyright 2026 CASHFLOW. All rights reserved.

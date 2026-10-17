@@ -6,7 +6,7 @@ import LoadingSpinner from '../components/Common/LoadingSpinner';
 
 /**
  * Financial Intelligence Dashboard
- * Uses existing CFONE color scheme and typography
+ * Uses existing CASHFLOW color scheme and typography
  */
 const FinancialIntelligence = () => {
   const navigate = useNavigate();

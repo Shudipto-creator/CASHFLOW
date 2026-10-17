@@ -1,272 +1,205 @@
-"""Document management API endpoints"""
+"""Document endpoints for CASHFLOW."""
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
-from sqlalchemy.orm import Session
-from app.database import get_db
-from app import models, schemas
-from app.dependencies import get_current_user
-from app.config import get_settings
-from app.utils.pdf_parser import extract_text_from_pdf
-from app.utils.excel_parser import extract_data_from_excel
-from typing import List, Optional
 import os
 import shutil
+import uuid
 import logging
-import json
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
+from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
+from typing import Optional, List
+from datetime import datetime
 
-logger = logging.getLogger(__name__)
+from app.database import get_db
+from app import models
+from app.dependencies import get_current_user, require_csrf
+from app.config import get_settings
+from app.security import scan_injection
+
 settings = get_settings()
+logger = logging.getLogger("cashflow")
+
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
+ALLOWED = {
+    "pdf": ["application/pdf"],
+    "xlsx": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+    "xls": ["application/vnd.ms-excel"],
+    "csv": ["text/csv"],
+}
 
-def validate_file(file: UploadFile) -> tuple[bool, Optional[str]]:
-    """Validate uploaded file"""
-    # Check file extension
-    ext = file.filename.split(".")[-1].lower()
+MAX_SIZE = settings.max_upload_size_mb * 1024 * 1024
 
-    if ext not in settings.allowed_extensions:
-        return False, f"File type .{ext} not supported. Allowed types: {', '.join(settings.allowed_extensions)}"
 
-    # Check file size (read first chunk to check)
-    file.file.seek(0, 2)  # Seek to end
+class DocumentResponse(BaseModel):
+    id: str
+    filename: str
+    stored_name: str
+    file_path: str
+    size_bytes: int
+    mime_type: str
+    document_type: Optional[str]
+    status: str
+    injection_flagged: bool
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class DocumentUpdate(BaseModel):
+    document_type: Optional[str] = None
+    status: Optional[str] = Field(None, pattern="^(uploaded|extracting|review|processed|quarantined|error)$")
+
+
+def _validate_and_store(file: UploadFile, org_id: str, user_id: str) -> dict:
+    filename = file.filename or "upload"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ALLOWED:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"File type .{ext} not allowed")
+
+    file.file.seek(0, 2)
     size = file.file.tell()
-    file.file.seek(0)  # Reset to beginning
+    file.file.seek(0)
+    if size > MAX_SIZE:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="File too large")
 
-    max_size_bytes = settings.max_upload_size_mb * 1024 * 1024
+    raw = file.file.read()
+    file.file.seek(0)
 
-    if size > max_size_bytes:
-        return False, f"File size exceeds limit of {settings.max_upload_size_mb}MB"
+    # Determine MIME from file magic bytes without external lib
+    if raw[:4] == b"%PDF":
+        mime = "application/pdf"
+    elif raw[:4] == b"PK\x03\x04":
+        mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    elif raw[:8] == b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1":
+        mime = "application/vnd.ms-excel"
+    else:
+        mime = "application/octet-stream"
 
-    return True, None
+    allowed_mimes = ALLOWED[ext]
+    if mime not in allowed_mimes and mime != "application/octet-stream":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"MIME type {mime} not allowed for .{ext}")
+
+    stored_name = f"{uuid.uuid4().hex}_{filename}"
+    org_dir = os.path.join(settings.upload_dir, org_id)
+    os.makedirs(org_dir, exist_ok=True)
+    file_path = os.path.join(org_dir, stored_name)
+    with open(file_path, "wb") as f:
+        f.write(raw)
+
+    return {
+        "filename": filename,
+        "stored_name": stored_name,
+        "file_path": file_path,
+        "size_bytes": size,
+        "mime_type": mime,
+        "ext": ext,
+    }
 
 
-@router.post("/upload", response_model=schemas.DocumentUploadResponse, status_code=status.HTTP_201_CREATED)
-async def upload_documents(
-    files: List[UploadFile] = File(...),
+@router.post("", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+async def upload_document(
+    file: UploadFile = File(...),
     document_type: Optional[str] = Form(None),
-    current_user: models.User = Depends(get_current_user),
+    request: Request = None,
+    user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Upload financial documents for analysis
-
-    Args:
-        files: One or more files (PDF or Excel)
-        document_type: Optional document type
-        current_user: Authenticated user
-        db: Database session
-
-    Returns:
-        Upload confirmation with document IDs
-
-    Raises:
-        HTTPException: If upload fails or validation errors
-    """
-    logger.info(f"Upload request from user {current_user.user_id}: {len(files)} files")
-
-    if len(files) > 5:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Maximum 5 files per request")
-
-    uploaded_docs = []
-
-    for file in files:
-        # Validate file
-        is_valid, error_msg = validate_file(file)
-
-        if not is_valid:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
-
-        # Generate document ID explicitly so it's available before DB insert
-        import uuid
-        doc_id = str(uuid.uuid4())
-        doc = models.Document(document_id=doc_id, user_id=current_user.user_id, filename=file.filename, document_type=document_type)
-
-        # Create directory for user and document
-        doc_dir = os.path.join(settings.upload_dir, current_user.user_id, doc_id)
-        os.makedirs(doc_dir, exist_ok=True)
-
-        # Save file
-        file_path = os.path.join(doc_dir, file.filename)
-
-        try:
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-
-            logger.info(f"File saved: {file_path}")
-
-        except Exception as e:
-            logger.error(f"Failed to save file: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to save file: {str(e)}"
-            )
-
-        # Get file size
-        doc.size_bytes = os.path.getsize(file_path)
-        doc.file_path = file_path
-        doc.processed = False
-
-        # Add to database
-        db.add(doc)
-        db.commit()
-        db.refresh(doc)
-
-        uploaded_docs.append(doc)
-
-    logger.info(f"Successfully uploaded {len(uploaded_docs)} documents")
-
-    return schemas.DocumentUploadResponse(
-        document_ids=[doc.document_id for doc in uploaded_docs],
-        uploaded_count=len(uploaded_docs),
-        documents=[
-            schemas.DocumentResponse(
-                document_id=doc.document_id,
-                filename=doc.filename,
-                document_type=doc.document_type,
-                size_bytes=doc.size_bytes,
-                uploaded_at=doc.uploaded_at,
-                processed=doc.processed,
-            )
-            for doc in uploaded_docs
-        ],
+    info = _validate_and_store(file, user.organization_id, user.id)
+    doc = models.Document(
+        org_id=user.organization_id,
+        user_id=user.id,
+        filename=info["filename"],
+        stored_name=info["stored_name"],
+        file_path=info["file_path"],
+        size_bytes=info["size_bytes"],
+        mime_type=info["mime_type"],
+        document_type=document_type,
+        status="uploaded",
     )
-
-
-@router.get("", response_model=schemas.DocumentListResponse)
-async def list_documents(
-    page: int = 1,
-    limit: int = 20,
-    document_type: Optional[str] = None,
-    current_user: models.User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    List all documents for authenticated user
-
-    Args:
-        page: Page number (1-indexed)
-        limit: Items per page (max 100)
-        document_type: Optional filter by document type
-        current_user: Authenticated user
-        db: Database session
-
-    Returns:
-        Paginated list of documents
-    """
-    if limit > 100:
-        limit = 100
-
-    offset = (page - 1) * limit
-
-    # Build query
-    query = db.query(models.Document).filter(models.Document.user_id == current_user.user_id)
-
-    if document_type:
-        query = query.filter(models.Document.document_type == document_type)
-
-    # Get total count
-    total = query.count()
-
-    # Get paginated results
-    documents = query.order_by(models.Document.uploaded_at.desc()).offset(offset).limit(limit).all()
-
-    return schemas.DocumentListResponse(
-        documents=[
-            schemas.DocumentResponse(
-                document_id=doc.document_id,
-                filename=doc.filename,
-                document_type=doc.document_type,
-                size_bytes=doc.size_bytes,
-                uploaded_at=doc.uploaded_at,
-                processed=doc.processed,
-            )
-            for doc in documents
-        ],
-        total=total,
-        page=page,
-        limit=limit,
-    )
-
-
-@router.get("/{document_id}", response_model=schemas.DocumentDetail)
-async def get_document(
-    document_id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
-):
-    """
-    Get details of specific document
-
-    Args:
-        document_id: Document ID
-        current_user: Authenticated user
-        db: Database session
-
-    Returns:
-        Document details
-
-    Raises:
-        HTTPException: If document not found or access denied
-    """
-    document = db.query(models.Document).filter(models.Document.document_id == document_id).first()
-
-    if not document:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-
-    if document.user_id != current_user.user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-
-    return schemas.DocumentDetail(
-        document_id=document.document_id,
-        filename=document.filename,
-        document_type=document.document_type,
-        size_bytes=document.size_bytes,
-        uploaded_at=document.uploaded_at,
-        processed=document.processed,
-        metadata=document.doc_metadata,
-    )
-
-
-@router.delete("/{document_id}")
-async def delete_document(
-    document_id: str, current_user: models.User = Depends(get_current_user), db: Session = Depends(get_db)
-):
-    """
-    Delete document and associated data
-
-    Args:
-        document_id: Document ID
-        current_user: Authenticated user
-        db: Database session
-
-    Returns:
-        Deletion confirmation
-
-    Raises:
-        HTTPException: If document not found or access denied
-    """
-    document = db.query(models.Document).filter(models.Document.document_id == document_id).first()
-
-    if not document:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-
-    if document.user_id != current_user.user_id:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-
-    # Delete file from filesystem
-    try:
-        if os.path.exists(document.file_path):
-            os.remove(document.file_path)
-
-        # Try to remove parent directory if empty
-        doc_dir = os.path.dirname(document.file_path)
-        if os.path.exists(doc_dir) and not os.listdir(doc_dir):
-            os.rmdir(doc_dir)
-
-    except Exception as e:
-        logger.warning(f"Failed to delete file: {str(e)}")
-
-    # Delete from database
-    db.delete(document)
+    db.add(doc)
     db.commit()
+    db.refresh(doc)
+    return doc
 
-    logger.info(f"Document deleted: {document_id}")
 
-    return {"message": "Document deleted successfully", "document_id": document_id}
+@router.get("", response_model=List[DocumentResponse])
+def list_documents(
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    document_type: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    q = db.query(models.Document).filter(models.Document.org_id == user.organization_id)
+    if document_type:
+        q = q.filter(models.Document.document_type == document_type)
+    if status:
+        q = q.filter(models.Document.status == status)
+    return q.order_by(models.Document.created_at.desc()).offset(offset).limit(limit).all()
+
+
+@router.get("/{document_id}", response_model=DocumentResponse)
+def get_document(
+    document_id: str,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    doc = (
+        db.query(models.Document)
+        .filter(models.Document.id == document_id, models.Document.org_id == user.organization_id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    return doc
+
+
+@router.patch("/{document_id}", response_model=DocumentResponse)
+def update_document(
+    document_id: str,
+    data: DocumentUpdate,
+    request: Request,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_csrf(request)
+    doc = (
+        db.query(models.Document)
+        .filter(models.Document.id == document_id, models.Document.org_id == user.organization_id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(doc, field, value)
+    db.commit()
+    db.refresh(doc)
+    return doc
+
+
+@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_document(
+    document_id: str,
+    request: Request,
+    user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_csrf(request)
+    doc = (
+        db.query(models.Document)
+        .filter(models.Document.id == document_id, models.Document.org_id == user.organization_id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    try:
+        if os.path.exists(doc.file_path):
+            os.remove(doc.file_path)
+    except Exception as exc:
+        logger.warning("Failed to delete stored file: %s", exc)
+    db.delete(doc)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

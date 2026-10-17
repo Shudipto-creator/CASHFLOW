@@ -1,83 +1,45 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { login, getCsrf } from '../services/api';
 
-const Login = () => {
+export default function Login() {
+  const navigate = useNavigate();
+  const { setUser } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
-  const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
+  const submit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-
-    const result = await login(email, password);
-
-    if (result.success) {
-      navigate('/dashboard');
-    } else {
-      setError(result.error);
+    try {
+      await getCsrf();
+      const res = await login(email, password);
+      setUser(res.data ? { id: res.data.user_id, email: res.data.email, organization_id: res.data.organization_id } : null);
+      navigate('/app');
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Login failed');
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
-        <h1 className="text-2xl font-bold text-center mb-6">Login to CFOne</h1>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-1">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-primary"
-              required
-            />
-          </div>
-
-          {error && (
-            <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-primary text-white py-2 rounded hover:bg-blue-700 disabled:bg-gray-400"
-          >
-            {loading ? 'Logging in...' : 'Login'}
-          </button>
-        </form>
-
-        <p className="text-center mt-4 text-sm">
-          Don't have an account?{' '}
-          <Link to="/register" className="text-primary hover:underline">
-            Register
-          </Link>
-        </p>
-      </div>
+    <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--color-bg)' }}>
+      <form onSubmit={submit} className="card" style={{ width: 400, padding: 32 }}>
+        <h1 className="font-serif mb-4" style={{ fontFamily: 'var(--font-serif)' }}>Log in</h1>
+        {error && <div style={{ color: 'var(--color-danger)', marginBottom: 12 }}>{error}</div>}
+        <label>Email</label>
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        <div style={{ height: 8 }} />
+        <label>Password</label>
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+        <div style={{ height: 16 }} />
+        <button className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>{loading ? 'Signing in' : 'Log in'}</button>
+      </form>
     </div>
   );
-};
-
-export default Login;
+}

@@ -1,0 +1,24 @@
+{% extends "base_public.html" %}
+{% from "macros.html" import field, button, flash %}
+{% block content %}
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="auth-header">
+      <h1>Create account</h1>
+      <p>Start forecasting your cash flow today.</p>
+    </div>
+    {% if flash %}{{ flash(flash, 'info') }}{% endif %}
+    <form method="post" action="{{ site_url }}/api/auth/register" data-lock>
+      {{ field("email", "Email", type="email", required=True, inputmode="email") }}
+      {{ field("password", "Password", type="password", required=True, help="At least 12 characters") }}
+      {{ field("first_name", "First name", required=True) }}
+      {{ field("last_name", "Last name", required=True) }}
+      {{ field("organization_name", "Organization name", required=True) }}
+      {{ field("country", "Country", type="text", value="US", required=True, help="ISO 2-letter code") }}
+      {{ field("base_currency", "Base currency", type="text", value="USD", required=True, help="3-letter code (e.g. USD)") }}
+      {{ button("Create account", variant="primary") }}
+    </form>
+    <p class="auth-footer">Already have an account? <a href="{{ site_url }}/login">Sign in</a></p>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="{{ theme or 'light' }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <meta name="description" content="{{ meta_description }}">
+  <link rel="canonical" href="{{ canonical }}">
+  <meta name="robots" content="noindex">
+  <meta http-equiv="X-Request-ID" content="{{ request_id }}">
+  <link rel="icon" href="{{ static('img/favicon.svg') }}">
+  <link rel="icon" href="{{ static('favicon.ico') }}" sizes="32x32" type="image/x-icon">
+  <link rel="apple-touch-icon" href="{{ static('apple-touch-icon.png') }}">
+  <link rel="manifest" href="{{ static('site.webmanifest') }}">
+  <link rel="stylesheet" href="{{ static('css/tokens.css') }}">
+  <link rel="stylesheet" href="{{ static('css/base.css') }}">
+  <link rel="stylesheet" href="{{ static('css/layout.css') }}">
+  <link rel="stylesheet" href="{{ static('css/components.css') }}">
+  <link rel="stylesheet" href="{{ static('css/app.css') }}">
+  <script defer src="{{ static('vendor/chart.min.js') }}"></script>
+  <script defer src="{{ static('js/charts.js') }}"></script>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to content</a>
+
+  {% include '_icons.svg' %}
+
+  <div class="app-shell">
+    <aside class="app-sidebar drawer" id="app-sidebar">
+      <div class="sidebar-inner">
+        <a class="wordmark" href="/app">CASHFLOW</a>
+        {% block sidebar %}{% endblock %}
+        <div class="sidebar-collapse" id="sidebar-collapse">
+          <button class="btn--ghost" id="sidebar-toggle" aria-label="Collapse sidebar">&#x2261;</button>
+        </div>
+      </div>
+    </aside>
+    <div class="drawer-backdrop" id="drawer-backdrop"></div>
+    <div class="app-main">
+      <header class="app-header">
+        <button class="mobile-menu-trigger" id="mobile-menu" aria-label="Open menu">&#x2261;</button>
+        {% block app_header %}{% endblock %}
+      </header>
+      <main id="main-content" class="app-content">
+        {% block guest_banner %}{% endblock %}
+        {% block flash %}{% endblock %}
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+  </div>
+
+  {% block extra_body %}{% endblock %}
+  <script type="module" src="{{ static('js/app.js') }}"></script>
+</body>
+</html>

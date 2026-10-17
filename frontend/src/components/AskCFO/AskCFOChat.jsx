@@ -4,7 +4,7 @@ import { askCFO } from "../../services/api";
 /**
  * AskCFOChat Component
  *
- * Chat interface for AgentCFO – CEO asks financial questions
+ * Chat interface for CASHFLOW – CEO asks financial questions
  * about the generated report, gets CFO-level strategic guidance.
  *
  * Props:
@@ -16,7 +16,7 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
     {
       role: "assistant",
       content:
-        "Hello! I'm **AgentCFO**, your financial advisor. Ask me anything about this report—cash runway, profit margins, funding strategy, expense optimization, or financial risks.",
+        "Hello! I'm **CASHFLOW**, your financial advisor. Ask me anything about this report—cash runway, profit margins, funding strategy, expense optimization, or financial risks.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -222,7 +222,7 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
       const errMsg =
         err.response?.data?.detail ||
         err.response?.data?.error?.message ||
-        "Failed to get AgentCFO response. Please try again.";
+        "Failed to get CASHFLOW response. Please try again.";
       setError(errMsg);
       setMessages((prev) => prev.slice(0, -1));
     } finally {
@@ -266,7 +266,7 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
           </div>
           <div>
             <h2 className="font-display text-base font-semibold text-[var(--text-primary)]">
-              AgentCFO
+              CASHFLOW
             </h2>
             <p className="font-mono text-[9px] tracking-widest text-[var(--text-muted)] uppercase">
               Financial Strategic Advisor
@@ -384,7 +384,7 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Ask AgentCFO... (Enter to send)"
+          placeholder="Ask CASHFLOW... (Enter to send)"
           rows={2}
           disabled={loading}
           className="flex-1 resize-none bg-[var(--bg-color)] border border-[var(--border-color)] rounded-sm px-4 py-3 font-mono text-[12px] text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--primary-accent)] transition-colors disabled:opacity-50"

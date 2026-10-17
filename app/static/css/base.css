@@ -1,0 +1,80 @@
+@font-face {
+  font-family: "Inter";
+  src: url("../fonts/Inter-Regular.woff2?v=dev") format("woff2");
+  font-weight: 1 1000;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Source Serif 4";
+  src: url("../fonts/SourceSerif4-Regular.woff2?v=dev") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Reset, typography, forms */
+
+html, body, div, span, h1, h2, h3, p, a, form, label, input, select, textarea,
+table, thead, tbody, tr, th, td, ul, ol, li, button, fieldset, legend, details, summary, dialog {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  vertical-align: baseline;
+}
+
+ul, ol { list-style: none; }
+
+button, input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+}
+
+input[type="file"] { font-size: var(--text-14); }
+
+.field { margin-bottom: var(--space-16); }
+.field > label {
+  display: block;
+  font-size: var(--text-14);
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: var(--space-6);
+}
+.field > input, .field > select, .field > textarea {
+  width: 100%;
+  padding: var(--space-8) var(--space-12);
+  font-size: var(--text-14);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+}
+.field > input:focus, .field > select:focus, .field > textarea:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px rgba(31, 111, 107, 0.15);
+}
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button { appearance: none; margin: 0; }
+
+.field-help {
+  font-size: var(--text-12);
+  color: var(--color-muted);
+  margin-top: var(--space-4);
+}
+.field-error {
+  font-size: var(--text-12);
+  color: var(--color-danger);
+  margin-top: var(--space-4);
+}
+input.error, select.error, textarea.error {
+  border-color: var(--color-danger);
+}

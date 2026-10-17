@@ -1,0 +1,10 @@
+{% extends "base_public.html" %}
+{% block title %}Not Found{% endblock %}
+{% block meta_description %}The page you're looking for doesn't exist.{% endblock %}
+{% block content %}
+<div class="card" style="max-width:480px;margin:0 auto;">
+  <h1>404 Not Found</h1>
+  <p>The page you're looking for doesn't exist.</p>
+  <p><a class="btn btn--primary" href="{{ site_url }}">Go home</a></p>
+</div>
+{% endblock %}

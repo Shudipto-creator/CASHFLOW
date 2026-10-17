@@ -1,0 +1,69 @@
+{% extends "base_app.html" %}
+{% block sidebar %}
+  <nav class="sidebar-nav" style="margin-top:var(--space-12);">
+    <a href="/app" class="nav-item nav-item--active">Dashboard</a>
+    <a href="/app/forecasts" class="nav-item">Forecasts</a>
+    <a href="/app/documents" class="nav-item">Documents</a>
+    <a href="/app/ask" class="nav-item">Ask CASHFLOW</a>
+    <a href="/app/settings" class="nav-item">Settings</a>
+  </nav>
+  <div class="sidebar-footer" style="margin-top:auto;padding:var(--space-8);border-top:1px solid var(--color-border);">
+    <form method="post" action="{{ site_url }}/api/auth/logout" style="margin:0;">
+      {{ button("Sign out", variant="ghost", extra_class="w-full") }}
+    </form>
+  </div>
+{% endblock %}
+{% block app_header %}
+  <div class="app-header-title">
+    <h1>Dashboard</h1>
+    <p class="app-header-sub">Organization overview for {{ user_email }}</p>
+  </div>
+  <div class="app-header-actions">
+    <button id="theme-toggle" class="btn btn--ghost" aria-label="Toggle theme">&#x2601;</button>
+  </div>
+{% endblock %}
+{% block content %}
+<div class="grid grid--4">
+  <div class="stat-card">
+    <div class="stat-label">Cash balance</div>
+    <div class="stat-value" id="stat-cash">—</div>
+    <div class="stat-delta stat-delta--up">+12.4% vs last month</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Monthly burn</div>
+    <div class="stat-value" id="stat-burn">—</div>
+    <div class="stat-delta stat-delta--down">−8.1% vs last month</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Runway</div>
+    <div class="stat-value" id="stat-runway">—</div>
+    <div class="stat-delta stat-delta--neutral">14 weeks</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Risk score</div>
+    <div class="stat-value" id="stat-risk">—</div>
+    <div class="stat-delta stat-delta--neutral">42 / 100</div>
+  </div>
+</div>
+
+<div class="grid grid--2" style="margin-top:var(--space-16);">
+  <div class="card">
+    <h2>Revenue trend</h2>
+    <div class="chart-wrap" style="height:300px;">
+      <canvas id="chart-revenue-trend" role="img" aria-label="Revenue trend"></canvas>
+      <script type="application/json" data-chart="line" data-target="chart-revenue-trend">
+        {"labels":["Jan","Feb","Mar","Apr","May","Jun"],"datasets":[{"label":"Revenue","data":[42000,48000,51000,46000,53000,58000]}]}
+      </script>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Expense breakdown</h2>
+    <div class="chart-wrap" style="height:300px;">
+      <canvas id="chart-expenses" role="img" aria-label="Expense breakdown"></canvas>
+      <script type="application/json" data-chart="doughnut" data-target="chart-expenses">
+        {"labels":["Salaries","Marketing","Infrastructure","Office","Operations"],"datasets":[{"data":[45,20,15,12,8]}]}
+      </script>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="{{ theme or 'light' }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <meta name="description" content="{{ meta_description }}">
+  <link rel="canonical" href="{{ canonical }}">
+  <meta name="robots" content="{{ robots or 'index,follow' }}">
+  <link rel="icon" href="{{ static('img/favicon.svg') }}">
+  <link rel="icon" href="{{ static('favicon.ico') }}" sizes="32x32" type="image/x-icon">
+  <link rel="apple-touch-icon" href="{{ static('apple-touch-icon.png') }}">
+  <link rel="manifest" href="{{ static('site.webmanifest') }}">
+  <link rel="preload" as="font" href="{{ static('fonts/Inter-Regular.woff2') }}" type="font/woff2" />
+  <link rel="preload" as="font" href="{{ static('fonts/SourceSerif4-Regular.woff2') }}" type="font/woff2" />
+  <link rel="stylesheet" href="{{ static('css/tokens.css') }}">
+  <link rel="stylesheet" href="{{ static('css/base.css') }}">
+  <link rel="stylesheet" href="{{ static('css/layout.css') }}">
+  <link rel="stylesheet" href="{{ static('css/components.css') }}">
+  <link rel="stylesheet" href="{{ static('css/public.css') }}">
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to content</a>
+
+  {% include '_icons.svg' %}
+
+  <header class="public-header" id="site-header">
+    <div class="public-brand" style="display:flex;align-items:center;gap:var(--space-8);">
+      <a class="wordmark" href="{{ site_url }}">CASHFLOW</a>
+    </div>
+    <nav class="public-nav">
+      {% block public_nav %}{% endblock %}
+    </nav>
+    <div class="public-actions">
+      {% block public_actions %}{% endblock %}
+    </div>
+  </header>
+
+  <main id="main-content">
+    {% block flash %}{% endblock %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="public-footer" id="site-footer">
+    {% block footer %}{% endblock %}
+  </footer>
+
+  {% block extra_body %}{% endblock %}
+  <script type="module" src="{{ static('js/app.js') }}"></script>
+</body>
+</html>
