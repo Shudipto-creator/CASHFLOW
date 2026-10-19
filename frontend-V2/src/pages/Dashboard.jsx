@@ -7,7 +7,7 @@ import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { FileText, Activity, CircleCheck, Upload, Play, MessageSquare, ArrowUpRight } from 'lucide-react';
+import { FileText, Activity, CheckCircle2, Upload, Play, MessageSquare, ArrowUpRight } from 'lucide-react';
 import LoadingSpinner from '../components/Common/LoadingSpinner';
 import PageHeader from '../components/Common/PageHeader';
 
@@ -161,7 +161,7 @@ const Dashboard = () => {
               label="Latest status"
               value={loadingStats ? '--' : latestStatus}
               hint={`Last run: ${formatSnapshotTime(latest?.completed_at || latest?.created_at)}`}
-              icon={CircleCheck}
+              icon={CheckCircle2}
               tone={statusTone}
             />
           </section>

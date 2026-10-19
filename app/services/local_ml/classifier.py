@@ -21,6 +21,7 @@ DOCUMENT_TYPES = [
     "cash_flow_statement",
     "tax_document",
     "financial_document",
+    "other",
 ]
 
 
@@ -48,6 +49,18 @@ def _training_corpus() -> Tuple[List[str], List[str]]:
         ("financial report summary metrics kpi dashboard overview", "financial_document"),
         ("monthly financial data revenue expenses liabilities loan emi", "financial_document"),
         ("company financial overview spreadsheet workbook sheets", "financial_document"),
+        ("restaurant menu appetizers entrees beverages prices", "other"),
+        ("resume curriculum vitae work experience education skills", "other"),
+        ("rental agreement tenant landlord lease property terms", "other"),
+        ("news article editorial headline reporter publication", "other"),
+        ("product catalog item description sku specifications", "other"),
+        ("meeting agenda attendees minutes action items", "other"),
+        ("recipe ingredients cooking instructions servings", "other"),
+        ("medical test results patient diagnosis treatment", "other"),
+        ("school essay assignment course bibliography", "other"),
+        ("travel itinerary flight hotel reservation confirmation", "other"),
+        ("user manual installation instructions troubleshooting", "other"),
+        ("event invitation date venue guest information", "other"),
     ]
     texts, labels = zip(*samples)
     return list(texts), list(labels)

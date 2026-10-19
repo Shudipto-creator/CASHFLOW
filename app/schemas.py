@@ -51,6 +51,11 @@ class DocumentResponse(BaseModel):
     document_id: str
     filename: str
     document_type: Optional[str]
+    suggested_document_type: Optional[str] = None
+    classification_confidence: Optional[float] = None
+    classification_status: str = "needs_review"
+    document_readable: Optional[bool] = None
+    classification_message: Optional[str] = None
     size_bytes: int
     uploaded_at: datetime
     processed: bool
@@ -78,6 +83,10 @@ class DocumentUploadResponse(BaseModel):
     document_ids: List[str]
     uploaded_count: int
     documents: List[DocumentResponse]
+
+
+class DocumentClassificationUpdate(BaseModel):
+    document_type: str
 
 
 # Analysis Schemas
@@ -119,6 +128,18 @@ class ReportResponse(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime]
     report: Optional[Dict[str, Any]] = None
+
+
+class ChatMessageResponse(BaseModel):
+    id: int
+    role: str
+    content: str
+    status: str
+    created_at: datetime
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: List[ChatMessageResponse]
 
 
 # Health Check Schema

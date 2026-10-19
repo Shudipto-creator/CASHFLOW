@@ -50,11 +50,17 @@ def run_local_analysis(
 
     for idx, chunk in enumerate(chunks):
         filename = names[idx] if idx < len(names) else ""
-        result = classifier.classify(chunk, filename=filename)
-        classified_types.append(str(result.get("document_type", "financial_document")))
-        classification_details.append(result)
+        if document_types and idx < len(document_types):
+            classified_types.append(document_types[idx])
+            classification_details.append({
+                "document_type": document_types[idx],
+                "source": "user_confirmed",
+            })
+        else:
+            result = classifier.classify(chunk, filename=filename)
+            classified_types.append(str(result.get("document_type", "financial_document")))
+            classification_details.append(result)
 
-    # Prefer freshly classified types; fall back to caller-provided types
     final_types = classified_types or document_types or ["financial_document"]
 
     logger.info("Local analysis document types: %s", final_types)

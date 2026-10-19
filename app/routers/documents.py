@@ -17,6 +17,102 @@ import json
 logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter(prefix="/api/documents", tags=["documents"])
+DOCUMENT_TYPE_OPTIONS = {
+    "bank_statement",
+    "invoice",
+    "profit_loss",
+    "balance_sheet",
+    "cash_flow_statement",
+    "tax_document",
+    "financial_document",
+    "other",
+}
+_document_classifier = None
+
+
+def _classify_document(file_path: str, filename: str) -> dict:
+    """Extract readable content and return a local document-type suggestion."""
+    global _document_classifier
+    extension = os.path.splitext(filename)[1].lower()
+
+    try:
+        if extension == ".pdf":
+            parsed = extract_text_from_pdf(file_path)
+            if "error" in parsed:
+                return {
+                    "suggested_document_type": "other",
+                    "confidence": 0.0,
+                    "status": "needs_review",
+                    "readable": False,
+                    "message": parsed["error"],
+                }
+            text = parsed.get("text", "")
+        elif extension in {".xlsx", ".xls"}:
+            parsed = extract_data_from_excel(file_path)
+            if "error" in parsed:
+                return {
+                    "suggested_document_type": "other",
+                    "confidence": 0.0,
+                    "status": "needs_review",
+                    "readable": False,
+                    "message": parsed["error"],
+                }
+            text = json.dumps(parsed.get("sheets", []), default=str)
+        else:
+            text = ""
+    except Exception as exc:
+        logger.warning("Could not extract content for document classification (%s): %s", filename, exc)
+        text = ""
+
+    if not text.strip():
+        return {
+            "suggested_document_type": "other",
+            "confidence": 0.0,
+            "status": "needs_review",
+            "readable": False,
+            "message": "No readable text was found. Scanned PDFs may need OCR before classification.",
+        }
+
+    try:
+        from app.services.local_ml.classifier import LocalDocumentClassifier
+
+        if _document_classifier is None:
+            _document_classifier = LocalDocumentClassifier()
+        result = _document_classifier.classify(text, filename=filename)
+        return {
+            "suggested_document_type": str(result.get("document_type", "other")),
+            "confidence": round(float(result.get("confidence", 0.0)), 4),
+            "status": "needs_review",
+            "readable": True,
+            "message": None,
+        }
+    except Exception as exc:
+        logger.warning("Document classification failed for %s: %s", filename, exc)
+        return {
+            "suggested_document_type": "other",
+            "confidence": 0.0,
+            "status": "needs_review",
+            "readable": True,
+            "message": "Automatic classification failed. Choose the document type manually.",
+        }
+
+
+def _document_response(document: models.Document) -> schemas.DocumentResponse:
+    metadata = document.doc_metadata if isinstance(document.doc_metadata, dict) else {}
+    classification = metadata.get("classification", {})
+    return schemas.DocumentResponse(
+        document_id=document.document_id,
+        filename=document.filename,
+        document_type=document.document_type,
+        suggested_document_type=classification.get("suggested_document_type"),
+        classification_confidence=classification.get("confidence"),
+        classification_status=classification.get("status", "needs_review"),
+        document_readable=classification.get("readable"),
+        classification_message=classification.get("message"),
+        size_bytes=document.size_bytes,
+        uploaded_at=document.uploaded_at,
+        processed=document.processed,
+    )
 
 
 def validate_file(file: UploadFile) -> tuple[bool, Optional[str]]:
@@ -76,6 +172,12 @@ async def upload_documents(
         if not is_valid:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
 
+        if document_type and document_type not in DOCUMENT_TYPE_OPTIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported document type: {document_type}",
+            )
+
         # Generate document ID explicitly so it's available before DB insert
         import uuid
         doc_id = str(uuid.uuid4())
@@ -104,6 +206,15 @@ async def upload_documents(
         doc.size_bytes = os.path.getsize(file_path)
         doc.file_path = file_path
         doc.processed = False
+        classification = _classify_document(file_path, file.filename)
+        if document_type:
+            classification["suggested_document_type"] = classification.get("suggested_document_type") or document_type
+            if classification.get("readable") is not False:
+                classification["status"] = "rejected" if document_type == "other" else "confirmed"
+            doc.document_type = document_type
+        else:
+            doc.document_type = None
+        doc.doc_metadata = {"classification": classification}
 
         # Add to database
         db.add(doc)
@@ -117,17 +228,7 @@ async def upload_documents(
     return schemas.DocumentUploadResponse(
         document_ids=[doc.document_id for doc in uploaded_docs],
         uploaded_count=len(uploaded_docs),
-        documents=[
-            schemas.DocumentResponse(
-                document_id=doc.document_id,
-                filename=doc.filename,
-                document_type=doc.document_type,
-                size_bytes=doc.size_bytes,
-                uploaded_at=doc.uploaded_at,
-                processed=doc.processed,
-            )
-            for doc in uploaded_docs
-        ],
+        documents=[_document_response(doc) for doc in uploaded_docs],
     )
 
 
@@ -170,17 +271,7 @@ async def list_documents(
     documents = query.order_by(models.Document.uploaded_at.desc()).offset(offset).limit(limit).all()
 
     return schemas.DocumentListResponse(
-        documents=[
-            schemas.DocumentResponse(
-                document_id=doc.document_id,
-                filename=doc.filename,
-                document_type=doc.document_type,
-                size_bytes=doc.size_bytes,
-                uploaded_at=doc.uploaded_at,
-                processed=doc.processed,
-            )
-            for doc in documents
-        ],
+        documents=[_document_response(doc) for doc in documents],
         total=total,
         page=page,
         limit=limit,
@@ -214,14 +305,53 @@ async def get_document(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return schemas.DocumentDetail(
-        document_id=document.document_id,
-        filename=document.filename,
-        document_type=document.document_type,
-        size_bytes=document.size_bytes,
-        uploaded_at=document.uploaded_at,
-        processed=document.processed,
+        **_document_response(document).dict(),
         metadata=document.doc_metadata,
     )
+
+
+@router.patch("/{document_id}/classification", response_model=schemas.DocumentResponse)
+async def update_document_classification(
+    document_id: str,
+    data: schemas.DocumentClassificationUpdate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if data.document_type not in DOCUMENT_TYPE_OPTIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Choose a supported document type",
+        )
+
+    document = (
+        db.query(models.Document)
+        .filter(
+            models.Document.document_id == document_id,
+            models.Document.user_id == current_user.user_id,
+        )
+        .first()
+    )
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    metadata = document.doc_metadata if isinstance(document.doc_metadata, dict) else {}
+    classification = dict(metadata.get("classification", {}))
+    if classification.get("readable") is False:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This file has no readable text. Provide a text-based PDF or spreadsheet; scanned PDFs require OCR.",
+        )
+    classification.update(
+        {
+            "status": "rejected" if data.document_type == "other" else "confirmed",
+            "confirmed_by_user": True,
+        }
+    )
+    document.document_type = data.document_type
+    document.doc_metadata = {**metadata, "classification": classification}
+    db.commit()
+    db.refresh(document)
+    return _document_response(document)
 
 
 @router.delete("/{document_id}")

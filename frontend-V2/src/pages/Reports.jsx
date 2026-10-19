@@ -2,6 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getAnalyses, getAnalysis } from '../services/api';
 import LoadingSpinner from '../components/Common/LoadingSpinner';
+import {
+  downloadFinancialMetricsCsv,
+  downloadReportText,
+  downloadRiskSummaryJson,
+} from '../utils/reportExports';
+
+const PAGE_SIZE = 20;
 
 const formatDate = (iso) => {
   if (!iso) return 'N/A';
@@ -10,244 +17,184 @@ const formatDate = (iso) => {
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
-const downloadJSON = (data, filename) => {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-};
-
-const downloadCSV = (data, filename) => {
-  const rows = [];
-  const addRow = (key, value) => {
-    const escaped = String(value).replace(/"/g, '""');
-    rows.push(`"${key}","${escaped}"`);
-  };
-
-  addRow('Metric', 'Value');
-
-  const section1 = data?.section_1_financial_health || {};
-  const section2 = data?.section_2_cash_flow_forecast || {};
-  const section3 = data?.section_3_risk_alerts || {};
-
-  addRow('Total Revenue', section1?.revenue?.total || section1?.financial_health?.total_revenue || 'N/A');
-  addRow('Total Expenses', section1?.expenses?.total || section1?.financial_health?.total_expenses || 'N/A');
-  addRow('Net Profit Margin (%)', section1?.metrics?.net_profit_margin || section1?.financial_health?.net_profit_margin_percent || 'N/A');
-  addRow('Monthly Burn Rate', section2?.monthly_burn_rate || section1?.metrics?.monthly_burn_rate || 'N/A');
-  addRow('Runway (months)', section2?.runway_months || section1?.metrics?.runway_months || 'N/A');
-  addRow('Risk Score', section3?.risk_score || 'N/A');
-  addRow('Risk Level', section3?.risk_level || 'N/A');
-  addRow('Loan Readiness Score', data?.section_5_loan_readiness_score || data?.loan_readiness_score || 'N/A');
-
-  const csv = rows.join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-};
-
-const downloadText = (analysisId, reportData) => {
-  const content = `
-FINANCIAL ANALYSIS REPORT
-${new Date().toLocaleDateString()}
-
-Analysis ID: ${analysisId}
-
-FINANCIAL HEALTH
-Revenue: ${reportData?.section_1_financial_health?.revenue?.total || 'N/A'}
-Expenses: ${reportData?.section_1_financial_health?.expenses?.total || 'N/A'}
-Net Profit Margin: ${reportData?.section_1_financial_health?.metrics?.net_profit_margin || 'N/A'}%
-
-CASH FLOW
-Monthly Burn Rate: ${reportData?.section_2_cash_flow_forecast?.monthly_burn_rate || 'N/A'}
-Runway: ${reportData?.section_2_cash_flow_forecast?.runway_months || 'N/A'} months
-
-RISK ASSESSMENT
-Risk Score: ${reportData?.section_3_risk_alerts?.risk_score || 'N/A'}
-Risk Level: ${reportData?.section_3_risk_alerts?.risk_level || 'N/A'}
-
-LOAN READINESS
-Score: ${reportData?.section_5_loan_readiness_score || reportData?.loan_readiness_score || 'N/A'}/100
-
-EXECUTIVE SUMMARY
-${reportData?.section_6_recommended_actions?.executive_summary || 'No summary available'}
-
-For full interactive report, open the full report view.
-`;
-
-  const blob = new Blob([content], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `financial-report-${analysisId.slice(0, 8)}.txt`;
-  link.click();
-  URL.revokeObjectURL(url);
-};
-
 export default function Reports() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [latestAnalysis, setLatestAnalysis] = useState(null);
-  const [reportData, setReportData] = useState(null);
+  const [analyses, setAnalyses] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [exportingKey, setExportingKey] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadLatestReport() {
+    async function loadReports() {
       try {
         setLoading(true);
         setError(null);
 
-        const analysesResp = await getAnalyses({ page: 1, limit: 50, status_filter: 'completed' });
-        const analyses = analysesResp?.data?.analyses || [];
-
-        if (!analyses.length) {
-          if (!cancelled) {
-            setLatestAnalysis(null);
-            setReportData(null);
-          }
-          return;
-        }
-
-        const latest = analyses[0];
-        if (!cancelled) setLatestAnalysis(latest);
-
-        try {
-          const reportResp = await getAnalysis(latest.analysis_id);
-          const report = reportResp?.data?.report || null;
-          if (!cancelled) setReportData(report);
-        } catch (e) {
-          if (!cancelled) setReportData(null);
+        const response = await getAnalyses({
+          page,
+          limit: PAGE_SIZE,
+          status_filter: 'completed',
+        });
+        if (!cancelled) {
+          setAnalyses(response.data.analyses || []);
+          setTotal(response.data.total || 0);
         }
       } catch (err) {
         if (!cancelled) {
           setError(err?.response?.data?.detail || 'Failed to load reports');
-          setLatestAnalysis(null);
-          setReportData(null);
+          setAnalyses([]);
+          setTotal(0);
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
-    loadLatestReport();
+    loadReports();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [page]);
+
+  const handleExport = async (analysisId, format) => {
+    const exportKey = `${analysisId}:${format}`;
+    setExportingKey(exportKey);
+    setError(null);
+
+    try {
+      const response = await getAnalysis(analysisId);
+      const reportData = response.data.report;
+      if (!reportData) throw new Error('Report data is not available for this analysis.');
+
+      if (format === 'text') downloadReportText(analysisId, reportData);
+      if (format === 'csv') downloadFinancialMetricsCsv(analysisId, reportData);
+      if (format === 'json') downloadRiskSummaryJson(analysisId, reportData);
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message || 'Failed to export report');
+    } finally {
+      setExportingKey(null);
+    }
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   if (loading) return <LoadingSpinner size="medium" />;
 
-  if (error) {
-    return (
-      <div className="surface-card p-10 border-[var(--negative-color)]">
-        <h1 className="text-2xl font-bold text-[var(--negative-color)] mb-4">Error</h1>
-        <p className="text-[var(--text-secondary)] font-mono text-sm">{error}</p>
-      </div>
-    );
-  }
-
-  if (!latestAnalysis) {
-    return (
-      <div className="surface-card p-10 text-center">
-        <h1 className="text-2xl font-bold text-[var(--text-primary)] mb-4">Reports</h1>
-        <p className="text-[var(--text-secondary)]">No financial reports available yet. Run an analysis to generate your first report.</p>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6 pb-12">
-      <div className="border-b border-[var(--border-color)] pb-6">
-        <h1 className="text-2xl font-bold text-[var(--text-primary)] tracking-wide mb-2">Executive Report Export</h1>
-        <p className="font-mono text-sm text-[var(--text-muted)] tracking-wide uppercase">Download and share your latest financial analysis</p>
+      <div className="flex flex-wrap items-end justify-between gap-4 border-b border-[var(--border-color)] pb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--text-primary)] tracking-wide mb-2">Reports</h1>
+          <p className="font-mono text-sm text-[var(--text-muted)] tracking-wide uppercase">Completed analyses and exports</p>
+        </div>
+        <span className="font-mono text-xs text-[var(--text-muted)]">{total} completed</span>
       </div>
 
-      <div className="surface-card p-6">
-        <h2 className="font-mono text-sm font-semibold text-[var(--text-primary)] mb-4 uppercase tracking-wider border-b border-[var(--border-color)] pb-2">
-          Latest Analysis
-        </h2>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-          <div>
-            <p className="font-mono text-[10px] tracking-wider text-[var(--text-muted)] uppercase mb-1">Analysis ID</p>
-            <p className="font-mono text-sm text-[var(--text-primary)] break-all">{latestAnalysis.analysis_id}</p>
-          </div>
-          <div>
-            <p className="font-mono text-[10px] tracking-wider text-[var(--text-muted)] uppercase mb-1">Date Completed</p>
-            <p className="font-mono text-sm text-[var(--text-primary)]">{formatDate(latestAnalysis.completed_at)}</p>
-          </div>
-          <div>
-            <p className="font-mono text-[10px] tracking-wider text-[var(--text-muted)] uppercase mb-1">Status</p>
-            <p className="font-mono text-sm">
-              <span className="inline-block px-3 py-1 border border-[var(--positive-color)] bg-[rgba(74,222,128,0.08)] text-[var(--positive-color)] rounded-sm uppercase text-[10px] tracking-wider font-medium">
-                {latestAnalysis.status}
-              </span>
-            </p>
-          </div>
-          <div>
-            <p className="font-mono text-[10px] tracking-wider text-[var(--text-muted)] uppercase mb-1">Documents Analyzed</p>
-            <p className="font-mono text-sm text-[var(--text-primary)]">{latestAnalysis.document_count}</p>
-          </div>
+      {error && (
+        <div role="alert" className="border border-[var(--negative-color)] p-4 font-mono text-sm text-[var(--negative-color)]">
+          {error}
         </div>
+      )}
 
-        <div className="border-t border-[var(--border-color)] pt-4">
+      {analyses.length === 0 ? (
+        <div className="surface-card p-10 text-center">
+          <h2 className="text-xl font-bold text-[var(--text-primary)] mb-3">No completed reports yet</h2>
+          <p className="text-[var(--text-secondary)] mb-6">Completed analyses will appear here with their own report and export actions.</p>
           <button
-            onClick={() => navigate(`/report/${latestAnalysis.analysis_id}`)}
-            className="px-4 py-2 border border-[var(--primary-accent)] text-[var(--primary-accent)] hover:bg-[var(--primary-accent)] hover:text-[var(--bg-color)] transition-colors font-mono text-xs uppercase tracking-widest rounded-sm font-medium"
+            type="button"
+            onClick={() => navigate('/analysis')}
+            className="border border-[var(--primary-accent)] px-4 py-2 font-mono text-xs uppercase tracking-widest text-[var(--primary-accent)] hover:bg-[var(--primary-accent)] hover:text-[var(--bg-color)]"
           >
-            Open Full Report
+            Go to Analysis
           </button>
         </div>
-      </div>
+      ) : (
+        <div className="space-y-3">
+          {analyses.map((analysis) => {
+            const id = analysis.analysis_id;
+            return (
+              <article key={id} className="surface-card flex flex-col gap-5 p-5 lg:flex-row lg:items-center lg:justify-between">
+                <div className="min-w-0 space-y-2">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h2 className="font-mono text-sm font-semibold text-[var(--text-primary)]">
+                      Report {id.slice(0, 8).toUpperCase()}
+                    </h2>
+                    <span className="border border-[var(--positive-color)] px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-[var(--positive-color)]">
+                      {analysis.status}
+                    </span>
+                  </div>
+                  <p className="font-mono text-xs text-[var(--text-secondary)]">
+                    Completed {formatDate(analysis.completed_at || analysis.created_at)}
+                  </p>
+                  <p className="font-mono text-xs text-[var(--text-muted)]">
+                    {analysis.document_count} {analysis.document_count === 1 ? 'document' : 'documents'}
+                  </p>
+                </div>
 
-      <div className="surface-card p-6">
-        <h2 className="font-mono text-sm font-semibold text-[var(--text-primary)] mb-4 uppercase tracking-wider border-b border-[var(--border-color)] pb-2">
-          Export Options
-        </h2>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/report/${id}`)}
+                    className="border border-[var(--primary-accent)] px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-[var(--primary-accent)] hover:bg-[var(--primary-accent)] hover:text-[var(--bg-color)]"
+                  >
+                    View report
+                  </button>
+                  {[
+                    ['text', 'TXT'],
+                    ['csv', 'CSV'],
+                    ['json', 'Risk JSON'],
+                  ].map(([format, label]) => {
+                    const exportKey = `${id}:${format}`;
+                    return (
+                      <button
+                        key={format}
+                        type="button"
+                        onClick={() => handleExport(id, format)}
+                        disabled={Boolean(exportingKey)}
+                        title={`Download ${label} for report ${id.slice(0, 8)}`}
+                        className="border border-[var(--border-color)] px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-[var(--text-primary)] hover:border-[var(--primary-accent)] hover:text-[var(--primary-accent)] disabled:opacity-50"
+                      >
+                        {exportingKey === exportKey ? 'Preparing...' : label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
 
-        <div className="space-y-4">
-          <div className="p-4 border border-[var(--border-color)] rounded-sm">
-            <h3 className="font-mono text-sm text-[var(--text-primary)] mb-2">Download Full Report</h3>
-            <p className="font-mono text-[10px] text-[var(--text-secondary)] mb-3">Plain text summary of your financial analysis including all key metrics and executive summary.</p>
+      {total > PAGE_SIZE && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border-color)] pt-4">
+          <p className="font-mono text-xs text-[var(--text-muted)]">
+            Showing {(page - 1) * PAGE_SIZE + 1}-{Math.min(page * PAGE_SIZE, total)} of {total} reports
+          </p>
+          <div className="flex gap-2">
             <button
-              onClick={() => downloadText(latestAnalysis.analysis_id, reportData)}
-              className="px-4 py-2 border border-[var(--border-color)] text-[var(--text-primary)] hover:border-[var(--primary-accent)] hover:text-[var(--primary-accent)] transition-colors font-mono text-[10px] uppercase tracking-widest rounded-sm"
+              type="button"
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={page <= 1}
+              className="border border-[var(--border-color)] px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-[var(--text-primary)] disabled:opacity-40"
             >
-              Download as Text
+              Previous
             </button>
-          </div>
-
-          <div className="p-4 border border-[var(--border-color)] rounded-sm">
-            <h3 className="font-mono text-sm text-[var(--text-primary)] mb-2">Download Financial Metrics</h3>
-            <p className="font-mono text-[10px] text-[var(--text-secondary)] mb-3">Spreadsheet-compatible CSV with all key financial metrics.</p>
+            <span className="px-2 py-2 font-mono text-[10px] text-[var(--text-muted)]">Page {page} of {totalPages}</span>
             <button
-              onClick={() => downloadCSV(reportData, `financial-metrics-${latestAnalysis.analysis_id.slice(0, 8)}.csv`)}
-              className="px-4 py-2 border border-[var(--border-color)] text-[var(--text-primary)] hover:border-[var(--primary-accent)] hover:text-[var(--primary-accent)] transition-colors font-mono text-[10px] uppercase tracking-widest rounded-sm"
+              type="button"
+              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+              disabled={page >= totalPages}
+              className="border border-[var(--border-color)] px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-[var(--text-primary)] disabled:opacity-40"
             >
-              Download as CSV
-            </button>
-          </div>
-
-          <div className="p-4 border border-[var(--border-color)] rounded-sm">
-            <h3 className="font-mono text-sm text-[var(--text-primary)] mb-2">Download Risk Summary</h3>
-            <p className="font-mono text-[10px] text-[var(--text-secondary)] mb-3">Risk assessment data in JSON format.</p>
-            <button
-              onClick={() => downloadJSON(reportData?.section_3_risk_alerts || {}, `risk-summary-${latestAnalysis.analysis_id.slice(0, 8)}.json`)}
-              className="px-4 py-2 border border-[var(--border-color)] text-[var(--text-primary)] hover:border-[var(--primary-accent)] hover:text-[var(--primary-accent)] transition-colors font-mono text-[10px] uppercase tracking-widest rounded-sm"
-            >
-              Download as JSON
+              Next
             </button>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

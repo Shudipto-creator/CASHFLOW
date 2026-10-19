@@ -2,6 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getAnalysis } from '../services/api';
 import LoadingSpinner from '../components/Common/LoadingSpinner';
+import {
+  downloadFinancialMetricsCsv,
+  downloadReportText,
+  downloadRiskSummaryJson,
+} from '../utils/reportExports';
 
 const MIN_SELECTION_LENGTH = 8;
 
@@ -87,12 +92,20 @@ const Report = () => {
     <div className="flex flex-col space-y-6 pb-12">
       <div className="flex justify-between items-end mb-4 border-b border-[var(--border-color)] pb-6">
         <div>
-          <button
-            onClick={() => navigate('/analysis')}
-            className="mb-4 text-[var(--text-muted)] hover:text-[var(--primary-accent)] transition-colors font-mono text-[10px] uppercase tracking-widest flex items-center"
-          >
-            <span className="mr-2">&larr;</span> Back to Analysis
-          </button>
+          <div className="mb-4 flex flex-wrap gap-4">
+            <button
+              onClick={() => navigate('/reports')}
+              className="text-[var(--text-muted)] hover:text-[var(--primary-accent)] transition-colors font-mono text-[10px] uppercase tracking-widest"
+            >
+              &larr; All Reports
+            </button>
+            <button
+              onClick={() => navigate('/analysis')}
+              className="text-[var(--text-muted)] hover:text-[var(--primary-accent)] transition-colors font-mono text-[10px] uppercase tracking-widest"
+            >
+              Back to Analysis
+            </button>
+          </div>
           <h1 className="text-2xl font-bold text-[var(--text-primary)] tracking-wide">
             Financial Analysis Report
           </h1>
@@ -338,7 +351,7 @@ const Report = () => {
             </div>
 
             {/* Executive Summary */}
-            {reportData.section_6_recommended_actions?.executive_summary && (
+            {report?.status === 'completed' && reportData && (
               <div
                 className="surface-card p-6 border-t-4 border-[var(--secondary-accent)]"
                 data-report-section="Executive Summary"
@@ -346,8 +359,35 @@ const Report = () => {
                 <h2 className="font-mono text-[10px] tracking-wider uppercase text-[var(--text-muted)] mb-3">
                   Executive Summary
                 </h2>
-                <div className="text-sm text-[var(--text-secondary)] leading-relaxed border-l-2 border-[var(--border-color)] pl-4">
-                  <p className="whitespace-pre-wrap">{reportData.section_6_recommended_actions.executive_summary}</p>
+                {reportData.section_6_recommended_actions?.executive_summary ? (
+                  <div className="text-sm text-[var(--text-secondary)] leading-relaxed border-l-2 border-[var(--border-color)] pl-4">
+                    <p className="whitespace-pre-wrap">{reportData.section_6_recommended_actions.executive_summary}</p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-[var(--text-muted)]">No executive summary is available for this report.</p>
+                )}
+                <div className="mt-5 flex flex-wrap gap-2 border-t border-[var(--border-color)] pt-4">
+                  <button
+                    type="button"
+                    onClick={() => downloadReportText(analysisId, reportData)}
+                    className="border border-[var(--border-color)] px-2.5 py-2 font-mono text-[9px] uppercase tracking-widest text-[var(--text-primary)] hover:border-[var(--primary-accent)] hover:text-[var(--primary-accent)]"
+                  >
+                    Export TXT
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadFinancialMetricsCsv(analysisId, reportData)}
+                    className="border border-[var(--border-color)] px-2.5 py-2 font-mono text-[9px] uppercase tracking-widest text-[var(--text-primary)] hover:border-[var(--primary-accent)] hover:text-[var(--primary-accent)]"
+                  >
+                    Export CSV
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadRiskSummaryJson(analysisId, reportData)}
+                    className="border border-[var(--border-color)] px-2.5 py-2 font-mono text-[9px] uppercase tracking-widest text-[var(--text-primary)] hover:border-[var(--primary-accent)] hover:text-[var(--primary-accent)]"
+                  >
+                    Risk JSON
+                  </button>
                 </div>
               </div>
             )}

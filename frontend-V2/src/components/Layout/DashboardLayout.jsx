@@ -17,7 +17,7 @@ import { useMode } from "../../context/ModeContext";
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { to: "/documents", label: "Documents", icon: FileText },
-  { to: "/analysis", label: "Analysis", icon: Activity, alsoMatches: "/report" },
+  { to: "/analysis", label: "Analysis", icon: Activity, alsoMatches: "/report/" },
   { to: "/chat", label: "AI CFO", icon: MessageSquare },
   { to: "/reports", label: "Reports", icon: BarChart3 },
 ];
@@ -159,7 +159,7 @@ export default function DashboardLayout() {
   const current =
     NAV_ITEMS.find((item) => pathname === item.to || (item.alsoMatches && pathname.startsWith(item.alsoMatches))) ||
     NAV_ITEMS[0];
-  const crumb = pathname.startsWith("/report") ? "Report" : current.label;
+  const crumb = pathname.startsWith("/report/") ? "Report" : current.label;
 
   return (
     <div className="app-shell flex h-[100dvh] overflow-hidden bg-[var(--bg-color)]">

@@ -12,6 +12,10 @@ const Analysis = () => {
   const [running, setRunning] = useState(false);
   const navigate = useNavigate();
   const { mode, modes, setMode, loading: modeLoading } = useMode();
+  const confirmedDocuments = documents.filter(
+    (doc) => doc.classification_status === 'confirmed' && doc.document_type !== 'other',
+  );
+  const documentsNeedingReview = documents.length - confirmedDocuments.length;
 
   useEffect(() => {
     fetchData();
@@ -115,15 +119,33 @@ const Analysis = () => {
             <p className="text-[var(--text-secondary)] font-mono text-sm">
               No documents available. Please upload documents first.
             </p>
+          ) : confirmedDocuments.length === 0 ? (
+            <div className="space-y-4">
+              <p className="text-[var(--text-secondary)] font-mono text-sm">
+                Review and confirm document types before starting an analysis.
+              </p>
+              <button
+                type="button"
+                onClick={() => navigate('/documents')}
+                className="btn-primary w-full py-2 text-sm font-medium uppercase tracking-wider"
+              >
+                Review documents
+              </button>
+            </div>
           ) : (
             <>
               <div className="mb-6 flex-1">
                 <p className="font-mono text-[10px] tracking-widest text-[var(--text-muted)] mt-2 mb-4 uppercase">
-                  Select a document to analyze
+                  Select a confirmed document to analyze
                 </p>
+                {documentsNeedingReview > 0 && (
+                  <p className="mb-3 font-mono text-[10px] text-[var(--primary-accent)]">
+                    {documentsNeedingReview} document(s) still need type review.
+                  </p>
+                )}
 
                 <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
-                  {documents.map((doc) => (
+                  {confirmedDocuments.map((doc) => (
                     <label
                       key={doc.document_id}
                       className={`flex items-center space-x-3 p-3 border rounded-sm cursor-pointer transition-colors
@@ -142,6 +164,9 @@ const Analysis = () => {
                       />
                       <span className="text-sm font-medium tracking-wide text-[var(--text-primary)] truncate">
                         {doc.filename}
+                      </span>
+                      <span className="ml-auto shrink-0 font-mono text-[9px] uppercase tracking-wider text-[var(--text-muted)]">
+                        {doc.document_type?.replaceAll('_', ' ')}
                       </span>
                     </label>
                   ))}

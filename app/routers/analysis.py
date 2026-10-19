@@ -97,7 +97,12 @@ def process_analysis(
                         continue
 
                     all_text.append(parsed_data.get("text", ""))
-                    doc.doc_metadata = {"page_count": parsed_data.get("page_count"), "tables": len(parsed_data.get("tables", []))}
+                    metadata = doc.doc_metadata if isinstance(doc.doc_metadata, dict) else {}
+                    doc.doc_metadata = {
+                        **metadata,
+                        "page_count": parsed_data.get("page_count"),
+                        "tables": len(parsed_data.get("tables", [])),
+                    }
 
                 elif doc.filename.endswith((".xlsx", ".xls")):
                     parsed_data = extract_data_from_excel(doc.file_path)
@@ -109,7 +114,8 @@ def process_analysis(
                     # Convert Excel data to text
                     excel_text = json.dumps(parsed_data.get("sheets", []), indent=2)
                     all_text.append(excel_text)
-                    doc.doc_metadata = parsed_data.get("metadata", {})
+                    metadata = doc.doc_metadata if isinstance(doc.doc_metadata, dict) else {}
+                    doc.doc_metadata = {**metadata, **parsed_data.get("metadata", {})}
 
                 doc_types.append(doc.document_type or "financial_document")
                 filenames.append(doc.filename)
@@ -184,18 +190,6 @@ def process_analysis(
 def _run_local_pipeline(db, analysis_id, combined_text, all_text, doc_types, filenames, documents):
     """Local sklearn classifier + rule/ML analyzer path (no AWS agents)."""
     from app.services.local_ml.pipeline import run_local_analysis
-    from app.services.local_ml.classifier import LocalDocumentClassifier
-
-    classifier = LocalDocumentClassifier()
-    for idx, doc in enumerate(documents):
-        if idx >= len(all_text):
-            break
-        classified = classifier.classify(all_text[idx], filename=doc.filename)
-        doc_type = str(classified.get("document_type") or doc.document_type or "financial_document")
-        doc.document_type = doc_type
-        if idx < len(doc_types):
-            doc_types[idx] = doc_type
-    db.commit()
 
     logger.info("Executing local ML classifier + analyzer pipeline")
     report_data = run_local_analysis(
@@ -399,6 +393,22 @@ async def run_analysis(
 
     if len(documents) != len(document_ids):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Some documents not found")
+
+    unconfirmed_documents = [
+        document
+        for document in documents
+        if not isinstance(document.doc_metadata, dict)
+        or document.doc_metadata.get("classification", {}).get("status") != "confirmed"
+        or document.doc_metadata.get("classification", {}).get("readable") is False
+        or not document.document_type
+        or document.document_type == "other"
+    ]
+    if unconfirmed_documents:
+        filenames = ", ".join(document.filename for document in unconfirmed_documents)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Review and confirm the financial document type before analysis: {filenames}",
+        )
 
     # Create analysis record
     analysis = models.Analysis(
