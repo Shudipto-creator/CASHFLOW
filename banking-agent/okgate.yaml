@@ -1,0 +1,98 @@
+# Zero-Trust policy gate for the banking agent.
+#
+# This file is the single source of truth for hard limits, approvals, the
+# loop breaker and the kill switch. It is deliberately NOT writable by the
+# agent: only a human edits it, which is what makes it a trust boundary.
+#
+# Launch (cwd must be this directory so the relative paths below resolve):
+#   npx -y -p @agentwares/agentguard okgate proxy --config okgate.yaml --run-id <id>
+#
+# Verify the audit chain afterwards:
+#   npx -y -p @agentwares/agentguard okgate verify .okgate/audit.jsonl
+
+version: 1
+mode: enforce
+
+upstreams:
+  - name: bank
+    command: python
+    args: ["-m", "banking_agent.bank.server"]
+    cwd: .
+    env:
+      PYTHONPATH: "."
+      PYTHONUNBUFFERED: "1"
+      # Keep the upstream quiet: okgate relays its stderr into the proxy log.
+      FASTMCP_SHOW_SERVER_BANNER: "false"
+      FASTMCP_LOG_LEVEL: "WARNING"
+    timeout_ms: 30000
+
+classify:
+  # Green — read-only, auto-executed by the agent, never needs a human.
+  read: ["get-*"]
+  # Money is committed here: keep this list to the tools that actually carry
+  # an amount, because only spend-class calls are charged against spend_usd.
+  spend: ["prepare-transfer"]
+  # Irreversible, but not priceable from their arguments.
+  write: ["execute-transfer", "create-recipient"]
+  # Fail closed: a tool nobody classified is refused, not allowed.
+  unknown: block
+
+approval:
+  # The human gate on money movement. wait_s: 0 makes the proxy answer
+  # APPROVAL_REQUIRED immediately so the UI can render a confirm button
+  # instead of holding the connection open.
+  tools: ["execute-transfer", "create-recipient"]
+  wait_s: 0
+  ttl_s: 3600
+
+caps:
+  # HARD LIMITS — the immovable outer wall.
+  #
+  # These are NOT the Track-2 Yellow/Red threshold. That threshold (¥1,000
+  # cumulative per day) lives in banking_agent/gate/tiers.py, because going
+  # past it must trigger MFA — and okgate has no MFA. okgate is the backstop
+  # an injected or looping agent cannot argue with.
+  #
+  # CURRENCY: okgate's spend accounting is USD-only (see agentguard-core's
+  # spend.ts, USD_LIKE set). With no `currency_arg` configured below the raw
+  # `amount` number is charged 1:1, so a CNY amount is counted as-is and
+  # "5000" means ¥5,000. Adding `currency_arg: currency` here would make
+  # every CNY call charge $0 and silently disable the cap. Do not add it.
+  per_day:
+    spend_usd: 5000 # ¥5,000/day; also bounds any single transfer to ¥5,000
+    writes: 50
+  per_run:
+    spend_usd: 5000
+    tool_calls: 60
+    writes: 20
+
+spend:
+  tools:
+    prepare-transfer:
+      amount_arg: amount
+  # No result_fields: the demo bank reports the price in the arguments, not
+  # in the response, so post-execution re-pricing would only add noise.
+  result_fields: []
+
+loop:
+  # Identical repeated calls are the signature of a stuck agent.
+  window: 30
+  max_repeats: 3 # writes and spends
+  max_read_repeats: 10 # reads get a looser limit
+  max_cycle_len: 4
+
+kill:
+  # The frontend Kill Switch writes this file (or sets the env var). Every
+  # tool call — including reads — is refused while it exists.
+  file: .okgate/KILL
+  env: OKGATE_KILL
+
+state:
+  dir: .okgate
+
+audit:
+  path: .okgate/audit.jsonl
+  # Arguments are recorded redacted; results are never written, so the log
+  # can be shown to a judge without leaking account data.
+  redact: true
+  include_results: false

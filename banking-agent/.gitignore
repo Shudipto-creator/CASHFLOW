@@ -1,0 +1,16 @@
+# okgate runtime state: counters, pending approvals, kill file, audit chain.
+# Never commit it — it is per-machine evidence.
+.okgate/
+
+# the agent's own daily-spend ledger
+.state/
+
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+*.log
+
+# Word owner files, created next to a .docx while it is open.
+~$*
