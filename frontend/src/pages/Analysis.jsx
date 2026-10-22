@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { getDocuments, getAnalyses, runAnalysis } from "../services/api";
 import LoadingSpinner from "../components/Common/LoadingSpinner";
+import { useMode } from "../context/ModeContext";
 
 const Analysis = () => {
   const [documents, setDocuments] = useState([]);
@@ -10,6 +11,11 @@ const Analysis = () => {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const navigate = useNavigate();
+  const { mode, modes, setMode, loading: modeLoading } = useMode();
+  const confirmedDocuments = documents.filter(
+    (doc) => doc.classification_status === 'confirmed' && doc.document_type !== 'other',
+  );
+  const documentsNeedingReview = documents.length - confirmedDocuments.length;
 
   useEffect(() => {
     fetchData();
@@ -43,9 +49,12 @@ const Analysis = () => {
       const response = await runAnalysis({
         document_ids: [selectedDoc],
         analysis_type: "full",
+        processing_mode: mode,
       });
 
-      alert("Analysis started! You will be notified when complete.");
+      alert(
+        `Analysis started in ${mode === "local" ? "Local" : "AWS"} mode! You will be notified when complete.`,
+      );
       navigate(`/report/${response.data.analysis_id}`);
     } catch (error) {
       alert(error.response?.data?.error?.message || "Failed to start analysis");
@@ -78,19 +87,66 @@ const Analysis = () => {
             Run New Analysis
           </h2>
 
+          <div className="mb-6">
+            <label className="block font-mono text-[9px] tracking-widest text-[var(--text-muted)] mb-2 uppercase">
+              Processing Mode
+            </label>
+            <select
+              value={mode}
+              disabled={modeLoading || running}
+              onChange={(e) => setMode(e.target.value)}
+              className="w-full bg-transparent border border-[var(--border-color)] text-[var(--text-primary)] font-mono text-sm px-3 py-2 focus:outline-none focus:border-[var(--primary-accent)]"
+            >
+              {(modes.length
+                ? modes
+                : [
+                    { id: "aws", label: "AWS Mode" },
+                    { id: "local", label: "Local Mode" },
+                  ]
+              ).map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label || option.id}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 font-mono text-[10px] text-[var(--text-muted)] leading-relaxed">
+              {mode === "local"
+                ? "Local: sklearn document classifier + rule/ML analyzer. Chat uses Ollama."
+                : "AWS: Bedrock Nova agents, Titan embeddings, and Sonic TTS."}
+            </p>
+          </div>
+
           {documents.length === 0 ? (
             <p className="text-[var(--text-secondary)] font-mono text-sm">
               No documents available. Please upload documents first.
             </p>
+          ) : confirmedDocuments.length === 0 ? (
+            <div className="space-y-4">
+              <p className="text-[var(--text-secondary)] font-mono text-sm">
+                Review and confirm document types before starting an analysis.
+              </p>
+              <button
+                type="button"
+                onClick={() => navigate('/documents')}
+                className="btn-select w-full py-2 font-mono text-sm uppercase tracking-wider"
+              >
+                Review documents
+              </button>
+            </div>
           ) : (
             <>
               <div className="mb-6 flex-1">
                 <p className="font-mono text-[9px] tracking-widest text-[var(--text-muted)] mt-2 mb-4 uppercase">
-                  Select a document to analyze
+                  Select a confirmed document to analyze
                 </p>
+                {documentsNeedingReview > 0 && (
+                  <p className="mb-3 font-mono text-[10px] text-[var(--primary-accent)]">
+                    {documentsNeedingReview} document(s) still need type review.
+                  </p>
+                )}
 
                 <div className="space-y-3 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
-                  {documents.map((doc) => (
+                  {confirmedDocuments.map((doc) => (
                     <label
                       key={doc.document_id}
                       className={`flex items-center space-x-3 p-3 border rounded-sm cursor-pointer transition-colors
@@ -110,6 +166,9 @@ const Analysis = () => {
                       <span className="text-sm font-mono tracking-wide text-[var(--text-primary)] truncate">
                         {doc.filename}
                       </span>
+                      <span className="ml-auto shrink-0 font-mono text-[9px] uppercase tracking-wider text-[var(--text-muted)]">
+                        {doc.document_type?.replace(/_/g, ' ')}
+                      </span>
                     </label>
                   ))}
                 </div>
@@ -120,7 +179,9 @@ const Analysis = () => {
                 disabled={running || !selectedDoc}
                 className="w-full bg-primary text-white py-2 rounded hover:bg-blue-700 disabled:bg-gray-400"
               >
-                {running ? "Starting Analysis..." : "Start Analysis"}
+                {running
+                  ? "Starting Analysis..."
+                  : `Start Analysis (${mode === "local" ? "Local" : "AWS"})`}
               </button>
             </>
           )}
@@ -150,6 +211,11 @@ const Analysis = () => {
                       </p>
                       <p className="font-mono text-sm font-semibold text-[var(--text-primary)]">
                         {analysis.document_count} document(s)
+                      </p>
+                      <p className="font-mono text-[10px] text-[var(--text-muted)] mt-1 uppercase tracking-wider">
+                        {(analysis.processing_mode || "aws") === "local"
+                          ? "Local mode"
+                          : "AWS mode"}
                       </p>
                     </div>
 

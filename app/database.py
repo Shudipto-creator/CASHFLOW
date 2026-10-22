@@ -48,3 +48,24 @@ def init_db():
     import app.models  # Import models to register them
 
     Base.metadata.create_all(bind=engine)
+    _ensure_sqlite_columns()
+
+
+def _ensure_sqlite_columns():
+    """Add newly introduced columns on existing SQLite databases."""
+    if not str(engine.url).startswith("sqlite"):
+        return
+
+    from sqlalchemy import text
+
+    alterations = [
+        ("analyses", "processing_mode", "ALTER TABLE analyses ADD COLUMN processing_mode VARCHAR(20) DEFAULT 'aws'"),
+    ]
+
+    with engine.connect() as conn:
+        for table, column, ddl in alterations:
+            rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+            existing = {row[1] for row in rows}
+            if column not in existing:
+                conn.execute(text(ddl))
+        conn.commit()
