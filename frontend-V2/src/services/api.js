@@ -90,4 +90,27 @@ export const getProcessingMode = () =>
 export const setProcessingMode = (mode) =>
   api.put('/api/settings/mode', { mode });
 
+// Wilson local ledger & billing
+export const getWilsonOverview = () => api.get('/api/wilson/overview');
+export const getWilsonCategories = () => api.get('/api/wilson/categories');
+export const importWilsonCsv = (formData) =>
+  api.post('/api/wilson/import', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+export const getWilsonTransactions = (params) =>
+  api.get('/api/wilson/transactions', { params });
+export const updateWilsonTransaction = (id, data) =>
+  api.patch(`/api/wilson/transactions/${id}`, data);
+export const categorizeWilson = () => api.post('/api/wilson/categorize');
+export const getWilsonAnomalies = (data = { types: ['all'] }) =>
+  api.post('/api/wilson/anomalies', data);
+export const getWilsonSummary = (params) =>
+  api.get('/api/wilson/summary', { params });
+export const askWilsonMoneyGone = (data = {}) =>
+  api.post('/api/wilson/ask', data);
+
+// TrueWealth-inspired portfolio metrics
+export const analyzePortfolio = (data) =>
+  api.post('/api/portfolio/analyze', data);
+
 export default api;

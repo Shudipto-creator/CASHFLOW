@@ -6,6 +6,7 @@ import {
   Activity,
   MessageSquare,
   BarChart3,
+  Wallet,
   PanelLeft,
   LogOut,
   Menu,
@@ -18,6 +19,7 @@ const NAV_ITEMS = [
   { to: "/dashboard", label: "Overview", icon: LayoutDashboard },
   { to: "/documents", label: "Documents", icon: FileText },
   { to: "/analysis", label: "Analysis", icon: Activity, alsoMatches: "/report/" },
+  { to: "/billing", label: "Billing", icon: Wallet },
   { to: "/chat", label: "AI CFO", icon: MessageSquare },
   { to: "/reports", label: "Reports", icon: BarChart3 },
 ];

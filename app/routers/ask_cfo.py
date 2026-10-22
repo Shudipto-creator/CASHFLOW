@@ -177,6 +177,25 @@ Remember: You are NOT a generic chatbot. You are a trusted CFO advisor speaking 
 # Helper: Build AgentCFO prompt with financial context
 # =====================================================================
 
+def _looks_like_ledger_question(question: str) -> bool:
+    q = (question or "").lower()
+    keywords = (
+        "where did my money",
+        "where did the money",
+        "spending",
+        "subscription",
+        "billing",
+        "duplicate charge",
+        "anomaly",
+        "category",
+        "wilson",
+        "bank csv",
+        "ledger",
+        "merchant",
+    )
+    return any(k in q for k in keywords)
+
+
 def _build_agentcfo_context_prompt(
     question: str,
     financial_report: dict,
@@ -184,6 +203,7 @@ def _build_agentcfo_context_prompt(
     selected_text: Optional[str] = None,
     selected_section: Optional[str] = None,
     retrieved_chunks: Optional[List[dict]] = None,
+    wilson_context: Optional[str] = None,
 ) -> str:
     """
     Build the full prompt with financial report context injected.
@@ -270,6 +290,9 @@ def _build_agentcfo_context_prompt(
                 chunk.get("chunk_text", ""),
                 "",
             ])
+
+    if wilson_context:
+        context_lines.extend([wilson_context, ""])
     
     # Add conversation history
     history_lines = []
@@ -438,6 +461,32 @@ async def ask_cfo(
         embedding_client=embedding_client,
     ) if selected_text else []
 
+    wilson_context = None
+    try:
+        from app.services.wilson import WilsonEngine
+
+        wilson_engine = WilsonEngine(db, current_user.user_id)
+        # Always attach compact ledger context when data exists; force for billing Qs
+        wilson_context = wilson_engine.context_for_ask_cfo()
+        if wilson_context and _looks_like_ledger_question(request.question):
+            money = wilson_engine.where_did_my_money_go()
+            wilson_context = (
+                wilson_context
+                + "\n\nWHERE DID MY MONEY GO (Wilson structured answer):\n"
+                + money.get("answer_text", "")
+                + "\n"
+                + json.dumps(
+                    {
+                        "totals": money.get("totals"),
+                        "by_category": money.get("by_category", [])[:8],
+                        "privacy": money.get("privacy"),
+                    },
+                    default=str,
+                )
+            )
+    except Exception as wilson_exc:
+        logger.warning("Wilson context unavailable for ask-cfo: %s", wilson_exc)
+
     # Build prompt with context injection
     prompt = _build_agentcfo_context_prompt(
         request.question,
@@ -446,6 +495,7 @@ async def ask_cfo(
         selected_text=selected_text,
         selected_section=request.selected_section,
         retrieved_chunks=retrieved_chunks,
+        wilson_context=wilson_context,
     )
     
     # Call LLM (Nova or Ollama) with AgentCFO system prompt

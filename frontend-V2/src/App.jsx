@@ -16,6 +16,7 @@ import Analysis from './pages/Analysis';
 import Report from './pages/Report';
 import Chat from './pages/Chat';
 import Reports from './pages/Reports';
+import Billing from './pages/Billing';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 
@@ -47,6 +48,7 @@ export default function App() {
               <Route path="/report/:analysisId" element={<Report />} />
               <Route path="/chat" element={<Chat />} />
               <Route path="/reports" element={<Reports />} />
+              <Route path="/billing" element={<Billing />} />
             </Route>
           </Routes>
         </BrowserRouter>

@@ -5,7 +5,7 @@ from app.config import get_settings
 from app.database import init_db
 from app.middleware.cors import setup_cors
 from app.middleware.error_handler import http_exception_handler, general_exception_handler
-from app.routers import auth, documents, analysis, ask_cfo, dashboard, settings as settings_router
+from app.routers import auth, documents, analysis, ask_cfo, dashboard, settings as settings_router, wilson, portfolio
 from app.services.llm_factory import get_embedding_client, get_llm_client
 from app.services.mode_service import get_processing_mode
 from app.services.embeddings import VectorStore
@@ -44,6 +44,8 @@ app.include_router(analysis.router)
 app.include_router(ask_cfo.router)
 app.include_router(dashboard.router)
 app.include_router(settings_router.router)
+app.include_router(wilson.router)
+app.include_router(portfolio.router)
 
 
 @app.on_event("startup")

@@ -101,3 +101,42 @@ class ChatMessage(Base):
     content = Column(Text, nullable=False)
     status = Column(String(20), nullable=False, default="complete")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class WilsonImport(Base):
+    """Imported bank CSV metadata for the Wilson local ledger."""
+
+    __tablename__ = "wilson_imports"
+
+    import_id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.user_id"), nullable=False, index=True)
+    filename = Column(String(255), nullable=False)
+    file_hash = Column(String(64), nullable=False, index=True)
+    bank = Column(String(50), nullable=True)
+    transaction_count = Column(Integer, nullable=False, default=0)
+    date_range_start = Column(String(10), nullable=True)
+    date_range_end = Column(String(10), nullable=True)
+    import_metadata = Column(JSON, nullable=True)
+    imported_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class WilsonTransaction(Base):
+    """Local bank ledger row — categorized and analyzed on-device by Wilson."""
+
+    __tablename__ = "wilson_transactions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.user_id"), nullable=False, index=True)
+    import_id = Column(String(36), ForeignKey("wilson_imports.import_id"), nullable=True, index=True)
+    date = Column(String(10), nullable=False, index=True)
+    description = Column(String(500), nullable=False)
+    amount = Column(Float, nullable=False)
+    category = Column(String(50), nullable=True, index=True)
+    category_confidence = Column(Float, nullable=True)
+    categorization_method = Column(String(20), nullable=True)
+    bank = Column(String(50), nullable=True)
+    source_file = Column(String(255), nullable=True)
+    external_key = Column(String(512), nullable=True, index=True)
+    is_recurring = Column(Boolean, default=False, nullable=False)
+    user_verified = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
