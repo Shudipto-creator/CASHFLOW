@@ -2,10 +2,12 @@ import React, { useState, useEffect } from "react";
 import { Sun, Moon } from "lucide-react";
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
+import { useMode } from "../../context/ModeContext";
 
 export default function ThemeLayout() {
   const [isDark, setIsDark] = useState(true);
   const { user, logout } = useAuth();
+  const { mode, modes, setMode, loading: modeLoading, local } = useMode();
   const navigate = useNavigate();
 
   // Update favicon based on theme
@@ -150,6 +152,34 @@ export default function ThemeLayout() {
         </div>
 
         <div className="flex items-center space-x-6 text-sm font-mono">
+          <label className="flex items-center space-x-2 text-[var(--nav-link-color)]">
+            <span className="text-[10px] tracking-widest uppercase hidden sm:inline">Mode</span>
+            <select
+              value={mode}
+              disabled={modeLoading}
+              onChange={(e) => setMode(e.target.value)}
+              title={
+                mode === "local"
+                  ? local?.chat_ready === false
+                    ? "Local analysis ready; start Ollama for chat"
+                    : "Local sklearn + Ollama"
+                  : "AWS Bedrock Nova pipeline"
+              }
+              className="bg-[var(--surface-card)] border border-[var(--border-color)] text-[var(--text-primary)] text-[11px] tracking-wider px-2 py-1.5 focus:outline-none focus:border-[var(--primary-accent)]"
+            >
+              {(modes.length
+                ? modes
+                : [
+                    { id: "aws", label: "AWS Mode" },
+                    { id: "local", label: "Local Mode" },
+                  ]
+              ).map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label || option.id}
+                </option>
+              ))}
+            </select>
+          </label>
           <span className="hidden lg:block text-[var(--nav-link-color)] text-[12px] tracking-wider">
             {user?.email || "Guest"}
           </span>

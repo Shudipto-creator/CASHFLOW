@@ -7,10 +7,11 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional
 from app.database import get_db
-from app import models
+from app import models, schemas
 from app.dependencies import get_current_user
-from app.services.nova_client import NovaClient
 from app.services.embeddings import VectorStore
+from app.services.llm_factory import get_embedding_client, get_llm_client
+from app.services.mode_service import resolve_mode
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["ask-cfo"])
@@ -29,12 +30,87 @@ class AskCFORequest(BaseModel):
     voice_id: str = "Matthew"
     selected_text: Optional[str] = None
     selected_section: Optional[str] = None
+    processing_mode: Optional[str] = None  # "aws" | "local"
 
 
 class AskCFOResponse(BaseModel):
     answer: str
+    message_id: Optional[int] = None
     audio_base64: Optional[str] = None
     audio_mime_type: Optional[str] = None
+    processing_mode: Optional[str] = None
+
+
+def _get_owned_analysis(analysis_id: str, current_user: models.User, db: Session):
+    analysis = (
+        db.query(models.Analysis)
+        .filter(
+            models.Analysis.analysis_id == analysis_id,
+            models.Analysis.user_id == current_user.user_id,
+        )
+        .first()
+    )
+    if not analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Analysis not found",
+        )
+    return analysis
+
+
+@router.get("/analysis/{analysis_id}/chat", response_model=schemas.ChatHistoryResponse)
+async def get_chat_history(
+    analysis_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    analysis = _get_owned_analysis(analysis_id, current_user, db)
+    if analysis.status != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Analysis is not yet completed",
+        )
+
+    messages = (
+        db.query(models.ChatMessage)
+        .filter(
+            models.ChatMessage.analysis_id == analysis_id,
+            models.ChatMessage.user_id == current_user.user_id,
+        )
+        .order_by(models.ChatMessage.id.asc())
+        .all()
+    )
+    return {
+        "messages": [
+            {
+                "id": message.id,
+                "role": message.role,
+                "content": message.content,
+                "status": message.status,
+                "created_at": message.created_at,
+            }
+            for message in messages
+        ]
+    }
+
+
+@router.delete("/analysis/{analysis_id}/chat")
+async def clear_chat_history(
+    analysis_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    _get_owned_analysis(analysis_id, current_user, db)
+    deleted_count = (
+        db.query(models.ChatMessage)
+        .filter(
+            models.ChatMessage.analysis_id == analysis_id,
+            models.ChatMessage.user_id == current_user.user_id,
+        )
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {"deleted_count": deleted_count}
 
 
 # =====================================================================
@@ -75,6 +151,9 @@ Tone:
 - Advisory (like addressing a CEO in a board meeting)
 - Data-driven and fact-based
 - Focused on practical outcomes
+
+Greeting:
+If the user greets you (e.g., "hello", "hi", "good morning", "hey"), respond with a brief professional greeting and offer to help with financial analysis questions. Do not provide unsolicited financial insights for a greeting.
 
 Risk detection:
 If the question relates to financial risks (low runway, high debt, low margin, etc.), always highlight the risk level and severity.
@@ -216,7 +295,7 @@ def _retrieve_analysis_chunks(
     current_user: models.User,
     analysis_id: str,
     query_text: str,
-    nova: NovaClient,
+    embedding_client,
 ) -> List[dict]:
     """Retrieve analysis-scoped evidence chunks for a selected-text follow-up."""
     associations = (
@@ -230,7 +309,7 @@ def _retrieve_analysis_chunks(
         return []
 
     try:
-        vector_store = VectorStore(nova)
+        vector_store = VectorStore(embedding_client)
         results = vector_store.search_similar(
             query=query_text,
             top_k=12,
@@ -269,21 +348,7 @@ async def ask_cfo(
             detail="analysis_id is required for Ask AgentCFO",
         )
     
-    # Fetch analysis and validate ownership
-    analysis = (
-        db.query(models.Analysis)
-        .filter(
-            models.Analysis.analysis_id == request.analysis_id,
-            models.Analysis.user_id == current_user.user_id,
-        )
-        .first()
-    )
-    
-    if not analysis:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Analysis not found",
-        )
+    analysis = _get_owned_analysis(request.analysis_id, current_user, db)
     
     if analysis.status != "completed":
         raise HTTPException(
@@ -294,14 +359,73 @@ async def ask_cfo(
     # Get the financial report data
     report = db.query(models.Report).filter(models.Report.analysis_id == request.analysis_id).first()
     financial_report = report.report_data if report else {}
-    
+
+    user_message = models.ChatMessage(
+        analysis_id=request.analysis_id,
+        user_id=current_user.user_id,
+        role="user",
+        content=request.question,
+        status="pending",
+    )
+    db.add(user_message)
+    db.commit()
+    db.refresh(user_message)
+
+    previous_messages = (
+        db.query(models.ChatMessage)
+        .filter(
+            models.ChatMessage.analysis_id == request.analysis_id,
+            models.ChatMessage.user_id == current_user.user_id,
+            models.ChatMessage.id < user_message.id,
+            models.ChatMessage.status == "complete",
+        )
+        .order_by(models.ChatMessage.id.desc())
+        .limit(12)
+        .all()
+    )
+    chat_history = [
+        ChatMessage(role=message.role, content=message.content)
+        for message in reversed(previous_messages)
+    ]
+
+    # Prefer request override → analysis mode → global setting
+    analysis_mode = getattr(analysis, "processing_mode", None)
+    mode = resolve_mode(request.processing_mode or analysis_mode)
+
+    # Handle simple greetings directly without invoking the LLM
+    GREETING_WORDS = {
+        "hello", "hi", "hey", "good morning", "good afternoon",
+        "good evening", "hi there", "hello there", "greetings",
+    }
+    if request.question.strip().lower() in GREETING_WORDS:
+        greeting = "Hello! I am AgentCFO, your AI Chief Financial Officer. I can help you analyze financial reports, review cash flow, assess risks, and answer questions about your business finances. Upload a document and run an analysis to get started."
+        user_message.status = "complete"
+        assistant_message = models.ChatMessage(
+            analysis_id=request.analysis_id,
+            user_id=current_user.user_id,
+            role="assistant",
+            content=greeting,
+            status="complete",
+        )
+        db.add(assistant_message)
+        db.commit()
+        db.refresh(assistant_message)
+        return AskCFOResponse(
+            answer=greeting,
+            message_id=assistant_message.id,
+            processing_mode=mode,
+        )
+
     try:
-        nova = NovaClient()
+        llm_client = get_llm_client(mode)
+        embedding_client = get_embedding_client(mode)
     except Exception as exc:
-        logger.error(f"Failed to initialize Nova client for ask-cfo: {exc}", exc_info=True)
+        logger.error(f"Failed to initialize LLM client for ask-cfo ({mode}): {exc}", exc_info=True)
+        user_message.status = "failed"
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service temporarily unavailable. Please try again.",
+            detail=f"AI service temporarily unavailable ({mode} mode). Please try again.",
         )
 
     selected_text = request.selected_text.strip() if request.selected_text else None
@@ -311,31 +435,37 @@ async def ask_cfo(
         current_user=current_user,
         analysis_id=request.analysis_id,
         query_text=retrieval_query,
-        nova=nova,
+        embedding_client=embedding_client,
     ) if selected_text else []
 
     # Build prompt with context injection
     prompt = _build_agentcfo_context_prompt(
         request.question,
         financial_report,
-        request.chat_history,
+        chat_history,
         selected_text=selected_text,
         selected_section=request.selected_section,
         retrieved_chunks=retrieved_chunks,
     )
     
-    # Call Nova Pro with AgentCFO system prompt
+    # Call LLM (Nova or Ollama) with AgentCFO system prompt
     try:
-        logger.info(f"Invoking Nova model for ask-cfo with question: {request.question[:100]}...")
-        result = nova.invoke_agent(
+        logger.info(
+            "Invoking %s model for ask-cfo with question: %s...",
+            mode,
+            request.question[:100],
+        )
+        result = llm_client.invoke_agent(
             prompt=prompt,
             system_prompt=AGENTCFO_SYSTEM_PROMPT,
             temperature=0.5,
             max_tokens=1500,
         )
-        logger.info(f"Nova response received: {str(result)[:200]}...")
+        logger.info(f"Ask-cfo response received ({mode}): {str(result)[:200]}...")
     except Exception as exc:
-        logger.error(f"Nova Pro call failed in ask-cfo: {exc}", exc_info=True)
+        logger.error(f"LLM call failed in ask-cfo ({mode}): {exc}", exc_info=True)
+        user_message.status = "failed"
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI service temporarily unavailable. Please try again.",
@@ -345,6 +475,8 @@ async def ask_cfo(
     answer = None
     if isinstance(result, dict):
         if "error" in result:
+            user_message.status = "failed"
+            db.commit()
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"AI model error: {result['error']}",
@@ -355,13 +487,15 @@ async def ask_cfo(
             # Try other common response keys
             answer = result.get("answer") or result.get("text")
         if not answer and len(result) > 0:
-            # Last resort: return first value if dict is not empty
-            answer = str(list(result.values())[0])
+            # Last resort: serialize full dict instead of first value only
+            answer = json.dumps(result)
     else:
         answer = str(result)
     
     if not answer:
         logger.error(f"No valid response text extracted from Nova result: {result}")
+        user_message.status = "failed"
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="AI model returned empty response",
@@ -370,9 +504,21 @@ async def ask_cfo(
     audio_base64 = None
     audio_mime_type = None
 
-    if request.voice_response:
+    user_message.status = "complete"
+    assistant_message = models.ChatMessage(
+        analysis_id=request.analysis_id,
+        user_id=current_user.user_id,
+        role="assistant",
+        content=answer,
+        status="complete",
+    )
+    db.add(assistant_message)
+    db.commit()
+    db.refresh(assistant_message)
+
+    if request.voice_response and mode == "aws":
         try:
-            voice_result = nova.synthesize_speech_with_sonic(
+            voice_result = llm_client.synthesize_speech_with_sonic(
                 text=answer,
                 voice_id=request.voice_id,
                 audio_format="mp3",
@@ -385,9 +531,11 @@ async def ask_cfo(
         except Exception as voice_exc:
             logger.warning("Voice synthesis failed, returning text only: %s", str(voice_exc))
 
-    logger.info(f"AgentCFO response generated successfully: {len(answer)} chars")
+    logger.info(f"AgentCFO response generated successfully: {len(answer)} chars (mode={mode})")
     return AskCFOResponse(
         answer=answer,
+        message_id=assistant_message.id,
         audio_base64=audio_base64,
         audio_mime_type=audio_mime_type,
+        processing_mode=mode,
     )

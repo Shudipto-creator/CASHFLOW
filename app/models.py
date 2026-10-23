@@ -49,6 +49,7 @@ class Analysis(Base):
     analysis_id = Column(String(36), primary_key=True, default=generate_uuid)
     user_id = Column(String(36), ForeignKey("users.user_id"), nullable=False, index=True)
     status = Column(String(20), nullable=False, index=True)  # processing/completed/failed
+    processing_mode = Column(String(20), nullable=True, default="aws")  # aws | local
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     error_message = Column(Text, nullable=True)
@@ -86,3 +87,17 @@ class Report(Base):
     analysis_id = Column(String(36), ForeignKey("analyses.analysis_id"), unique=True, nullable=False, index=True)
     report_data = Column(JSON, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChatMessage(Base):
+    """Persist AgentCFO messages for an analysis conversation."""
+
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    analysis_id = Column(String(36), ForeignKey("analyses.analysis_id"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.user_id"), nullable=False, index=True)
+    role = Column(String(20), nullable=False)
+    content = Column(Text, nullable=False)
+    status = Column(String(20), nullable=False, default="complete")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

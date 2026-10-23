@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     nova_model_id: str = "global.amazon.nova-2-lite-v1:0"
     embedding_model_id: str = "amazon.titan-embed-text-v2:0"
 
+    # Processing mode: "aws" (Bedrock) or "local" (sklearn + Ollama)
+    processing_mode: str = "aws"
+
+    # Ollama (local LLM chat layer)
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.2"
+    ollama_embed_model: str = "nomic-embed-text"
+
     # Processing Settings
     chunk_size_words: int = 500
     chunk_overlap_words: int = 50

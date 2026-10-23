@@ -1,0 +1,286 @@
+@import url("https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* INTERFACE-inspired system: near-black canvas, bone text, single signal-orange accent */
+:root,
+html.light {
+  color-scheme: dark;
+  --bg-color: #0a0a0a;
+  --surface-card: #111111;
+  --surface-raised: #161616;
+  --text-primary: #ededea;
+  --text-secondary: #a3a3a0;
+  --text-muted: #6b6b68;
+  --primary-accent: #ff5a1f;
+  --primary-accent-hover: #ff7444;
+  --secondary-accent: #a3a3a0;
+  --border-color: #262626;
+  --nav-bg: rgba(10, 10, 10, 0.85);
+  --nav-border: #262626;
+  --nav-link-color: #a3a3a0;
+  --positive-color: #4ade80;
+  --negative-color: #f87171;
+  --cmd-line-color: #ff5a1f;
+}
+
+html {
+  background-color: var(--bg-color);
+}
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+}
+
+h1,
+h2,
+h3 {
+  font-family: "Bebas Neue", "IBM Plex Mono", sans-serif;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
+.font-mono,
+.font-body {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+.font-display {
+  font-family: "Bebas Neue", sans-serif;
+  font-weight: 400;
+}
+
+::selection {
+  background: var(--primary-accent);
+  color: #0a0a0a;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-color);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+}
+
+.surface-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-color);
+  border-radius: 0;
+}
+
+.btn-primary {
+  background: var(--primary-accent);
+  border: 1px solid var(--primary-accent);
+  color: #0a0a0a;
+  border-radius: 0;
+  font-family: "IBM Plex Mono", monospace;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.btn-primary:hover {
+  background: var(--primary-accent-hover);
+  border-color: var(--primary-accent-hover);
+}
+
+.btn-outline,
+.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: 0;
+  font-family: "IBM Plex Mono", monospace;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+
+.btn-secondary {
+  color: var(--text-secondary);
+}
+
+.btn-outline:hover,
+.btn-secondary:hover {
+  border-color: var(--primary-accent);
+  color: var(--primary-accent);
+}
+
+.input-field {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 0;
+  background: var(--bg-color);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  transition: border-color 150ms ease;
+}
+
+.input-field::placeholder {
+  color: var(--text-muted);
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--primary-accent);
+}
+
+select,
+option {
+  background-color: var(--surface-card);
+  color: var(--text-primary);
+}
+
+/* Dashboard console (M.O.N.K.Y-style): softer radii, bulleted panel titles */
+.app-shell .surface-card {
+  border-radius: 10px;
+}
+
+.app-shell .btn-primary,
+.app-shell .btn-outline,
+.app-shell .btn-secondary,
+.app-shell .input-field {
+  border-radius: 6px;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.panel-title::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  background: var(--primary-accent);
+}
+
+.stripes {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(237, 237, 234, 0.035) 0 1px,
+    transparent 1px 9px
+  );
+}
+
+/* Faint blueprint grid used behind hero areas */
+.grid-backdrop {
+  background-image:
+    linear-gradient(to right, rgba(237, 237, 234, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(237, 237, 234, 0.04) 1px, transparent 1px);
+  background-size: 64px 64px;
+}
+
+/* Split-flap tile */
+.flap-tile {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-family: "Bebas Neue", sans-serif;
+  line-height: 1;
+  overflow: hidden;
+}
+
+.flap-tile::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: rgba(0, 0, 0, 0.9);
+}
+
+.flap-tile.is-flipping {
+  animation: flap 90ms linear;
+}
+
+@keyframes flap {
+  0% {
+    transform: scaleY(1);
+  }
+  50% {
+    transform: scaleY(0.82);
+  }
+  100% {
+    transform: scaleY(1);
+  }
+}
+
+/* Outline text that draws itself in */
+.stroke-draw text {
+  fill: transparent;
+  stroke: var(--text-primary);
+  stroke-width: 1;
+  stroke-dasharray: 1400;
+  stroke-dashoffset: 1400;
+  animation: draw 3.2s ease forwards;
+}
+
+@keyframes draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Ticker marquee */
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marquee 40s linear infinite;
+}
+
+@keyframes marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.blink {
+  animation: blink 1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track,
+  .blink,
+  .flap-tile.is-flipping {
+    animation: none;
+  }
+  .stroke-draw text {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}

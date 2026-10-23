@@ -1,5 +1,16 @@
 import React, { useState, useRef, useEffect } from "react";
-import { askCFO } from "../../services/api";
+import {
+  askCFO,
+  clearChatHistory,
+  getChatHistory,
+} from "../../services/api";
+import { useMode } from "../../context/ModeContext";
+
+const GREETING_MESSAGE = {
+  role: "assistant",
+  content:
+    "Hello! I'm **AgentCFO**, your financial advisor. Ask me anything about this report—cash runway, profit margins, funding strategy, expense optimization, or financial risks.",
+};
 
 /**
  * AskCFOChat Component
@@ -12,15 +23,11 @@ import { askCFO } from "../../services/api";
  *   reportData  – Optional report data for display context
  */
 const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
-  const [messages, setMessages] = useState([
-    {
-      role: "assistant",
-      content:
-        "Hello! I'm **AgentCFO**, your financial advisor. Ask me anything about this report—cash runway, profit margins, funding strategy, expense optimization, or financial risks.",
-    },
-  ]);
+  const { mode, modes, setMode, loading: modeLoading } = useMode();
+  const [messages, setMessages] = useState([GREETING_MESSAGE]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(Boolean(analysisId));
   const [error, setError] = useState(null);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [listening, setListening] = useState(false);
@@ -31,11 +38,58 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
   const recognitionRef = useRef(null);
   const activeAudioRef = useRef(null);
   const textareaRef = useRef(null);
+  const hasPendingMessage = messages.some((message) => message.status === "pending");
 
   // Auto-scroll to newest message
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    if (!analysisId) {
+      setMessages([GREETING_MESSAGE]);
+      setLoadingHistory(false);
+      return undefined;
+    }
+
+    let active = true;
+    setLoadingHistory(true);
+    setError(null);
+
+    getChatHistory(analysisId)
+      .then((response) => {
+        if (!active) return;
+        setMessages(response.data.messages?.length ? response.data.messages : [GREETING_MESSAGE]);
+      })
+      .catch((err) => {
+        if (active) {
+          setError(err.response?.data?.detail || "Failed to load chat history");
+        }
+      })
+      .finally(() => {
+        if (active) setLoadingHistory(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [analysisId]);
+
+  useEffect(() => {
+    if (!analysisId || !hasPendingMessage) return undefined;
+
+    const intervalId = setInterval(() => {
+      getChatHistory(analysisId)
+        .then((response) => {
+          setMessages(response.data.messages?.length ? response.data.messages : [GREETING_MESSAGE]);
+        })
+        .catch((err) => {
+          setError(err.response?.data?.detail || "Failed to refresh chat history");
+        });
+    }, 2000);
+
+    return () => clearInterval(intervalId);
+  }, [analysisId, hasPendingMessage]);
 
   useEffect(() => {
     if (!selectedContext?.id || !selectedContext?.text) return;
@@ -181,7 +235,7 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
 
   const handleSend = async () => {
     const question = input.trim();
-    if (!question || loading) return;
+    if (!question || loading || hasPendingMessage) return;
 
     setError(null);
     const userMessage = { role: "user", content: question };
@@ -191,19 +245,14 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
     setLoading(true);
 
     try {
-      // Build chat history (exclude system greeting and latest user turn)
-      const historyForAPI = messages
-        .filter((m) => m.role !== "system")
-        .map((m) => ({ role: m.role, content: m.content }));
-
       const payload = {
         question,
         analysis_id: analysisId,
-        chat_history: historyForAPI,
         voice_response: voiceEnabled,
         voice_id: "Matthew",
         selected_text: activeSelectionContext?.text || undefined,
         selected_section: activeSelectionContext?.section || undefined,
+        processing_mode: mode,
       };
 
       const response = await askCFO(payload);
@@ -224,9 +273,21 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
         err.response?.data?.error?.message ||
         "Failed to get AgentCFO response. Please try again.";
       setError(errMsg);
-      setMessages((prev) => prev.slice(0, -1));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleClear = async () => {
+    if (!analysisId || loading || loadingHistory || hasPendingMessage) return;
+    if (!window.confirm("Clear the saved conversation for this analysis?")) return;
+    try {
+      await clearChatHistory(analysisId);
+      setMessages([GREETING_MESSAGE]);
+      setError(null);
+      stopActiveSpeech();
+    } catch (err) {
+      setError(err.response?.data?.detail || "Failed to clear chat history");
     }
   };
 
@@ -257,43 +318,87 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
       style={{ height: "700px", borderTop: "1px solid var(--border-color)" }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-color)] flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-sm bg-gradient-to-br from-[var(--primary-accent)] to-[var(--secondary-accent)] flex items-center justify-center">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-color)] flex-shrink-0 gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-8 h-8 rounded-sm bg-gradient-to-br from-[var(--primary-accent)] to-[var(--secondary-accent)] flex items-center justify-center flex-shrink-0">
             <span className="font-mono text-[10px] font-bold text-[var(--bg-color)]">
               CFO
             </span>
           </div>
-          <div>
+          <div className="min-w-0">
             <h2 className="font-display text-base font-semibold text-[var(--text-primary)]">
               AgentCFO
             </h2>
             <p className="font-mono text-[9px] tracking-widest text-[var(--text-muted)] uppercase">
-              Financial Strategic Advisor
+              Financial Strategic Advisor ·{" "}
+              {mode === "local" ? "Ollama (Local)" : "AWS Nova"}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {isSpeaking && (
-            <span className="font-mono text-[9px] tracking-widest text-[var(--primary-accent)] uppercase">
-              Speaking
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <button
+            type="button"
+            onClick={handleClear}
+            disabled={!analysisId || loading || loadingHistory || hasPendingMessage || messages.length <= 1}
+            className="border border-[var(--border-color)] px-2 py-1.5 font-mono text-[9px] uppercase tracking-widest text-[var(--text-muted)] hover:border-[var(--negative-color)] hover:text-[var(--negative-color)] disabled:opacity-40"
+          >
+            Clear chat
+          </button>
+          <label className="flex items-center gap-2">
+            <span className="font-mono text-[9px] tracking-widest text-[var(--text-muted)] uppercase hidden sm:inline">
+              Mode
             </span>
-          )}
-          <span className="w-2 h-2 rounded-full bg-[var(--positive-color)] animate-pulse"></span>
-          <span className="font-mono text-[9px] tracking-widest text-[var(--text-muted)] uppercase">
-            Ready
-          </span>
+            <select
+              value={mode}
+              disabled={modeLoading || loading}
+              onChange={(e) => setMode(e.target.value)}
+              className="bg-transparent border border-[var(--border-color)] text-[var(--text-primary)] font-mono text-[11px] px-2 py-1.5 focus:outline-none focus:border-[var(--primary-accent)]"
+              title={
+                mode === "local"
+                  ? "Chat via Ollama (local LLM)"
+                  : "Chat via AWS Bedrock Nova"
+              }
+            >
+              {(modes.length
+                ? modes
+                : [
+                    { id: "aws", label: "AWS Mode" },
+                    { id: "local", label: "Local Mode" },
+                  ]
+              ).map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label || option.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex items-center gap-2">
+            {isSpeaking && (
+              <span className="font-mono text-[9px] tracking-widest text-[var(--primary-accent)] uppercase">
+                Speaking
+              </span>
+            )}
+            <span className="w-2 h-2 rounded-full bg-[var(--positive-color)] animate-pulse"></span>
+            <span className="font-mono text-[9px] tracking-widest text-[var(--text-muted)] uppercase">
+              Ready
+            </span>
+          </div>
         </div>
       </div>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4 scrollbar-thin">
+        {loadingHistory && (
+          <div className="py-4 text-center font-mono text-[10px] uppercase tracking-widest text-[var(--text-muted)]">
+            Loading conversation...
+          </div>
+        )}
         {messages.map((msg, idx) => (
           <MessageBubble key={idx} message={msg} />
         ))}
 
         {/* Typing indicator */}
-        {loading && (
+        {(loading || hasPendingMessage) && (
           <div className="flex items-end gap-2">
             <div className="w-6 h-6 rounded-sm bg-[var(--surface-color)] border border-[var(--border-color)] flex items-center justify-center flex-shrink-0">
               <span className="font-mono text-[7px] text-[var(--primary-accent)]">
@@ -386,7 +491,7 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
           onKeyDown={handleKeyDown}
           placeholder="Ask AgentCFO... (Enter to send)"
           rows={2}
-          disabled={loading}
+          disabled={loading || loadingHistory || hasPendingMessage}
           className="flex-1 resize-none bg-[var(--bg-color)] border border-[var(--border-color)] rounded-sm px-4 py-3 font-mono text-[12px] text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-[var(--primary-accent)] transition-colors disabled:opacity-50"
         />
         <button
@@ -423,7 +528,7 @@ const AskCFOChat = ({ analysisId, reportData, selectedContext = null }) => {
         </button>
         <button
           onClick={handleSend}
-          disabled={loading || !input.trim()}
+          disabled={loading || loadingHistory || hasPendingMessage || !input.trim()}
           className="h-full px-5 py-3 bg-[var(--primary-accent)] text-[var(--bg-color)] font-mono text-[11px] tracking-widest uppercase rounded-sm hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 flex-shrink-0"
         >
           {loading ? (
