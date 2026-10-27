@@ -5,8 +5,9 @@ from app.config import get_settings
 from app.database import init_db
 from app.middleware.cors import setup_cors
 from app.middleware.error_handler import http_exception_handler, general_exception_handler
-from app.routers import auth, documents, analysis, ask_cfo, dashboard
-from app.services.nova_client import NovaClient
+from app.routers import auth, documents, analysis, ask_cfo, dashboard, settings as settings_router, billflow, portfolio, banking
+from app.services.llm_factory import get_embedding_client, get_llm_client
+from app.services.mode_service import get_processing_mode
 from app.services.embeddings import VectorStore
 from datetime import datetime
 import logging
@@ -42,6 +43,10 @@ app.include_router(documents.router)
 app.include_router(analysis.router)
 app.include_router(ask_cfo.router)
 app.include_router(dashboard.router)
+app.include_router(settings_router.router)
+app.include_router(billflow.router)
+app.include_router(portfolio.router)
+app.include_router(banking.router)
 
 
 @app.on_event("startup")
@@ -63,7 +68,7 @@ async def startup_event():
 
 
 @app.on_event("shutdown")
-async def shutdown_event():
+async def shutdown_event(): 
     """Cleanup on shutdown"""
     logger.info("Shutting down CFOne application...")
 
@@ -76,27 +81,44 @@ async def health_check():
     Returns:
         Health status information
     """
-    # Check AWS Bedrock connection
+    active_mode = get_processing_mode()
+
+    # Check active LLM provider
+    llm_status = "unknown"
+    try:
+        llm_client = get_llm_client(active_mode)
+        if llm_client.check_connection():
+            llm_status = "connected"
+        else:
+            llm_status = "disconnected"
+    except Exception:
+        llm_status = "error"
+
+    # Keep AWS probe for visibility even in local mode
     bedrock_status = "unknown"
     try:
-        nova_client = NovaClient()
-        if nova_client.check_connection():
-            bedrock_status = "connected"
-        else:
-            bedrock_status = "disconnected"
-    except:
+        aws_client = get_llm_client("aws")
+        bedrock_status = "connected" if aws_client.check_connection() else "disconnected"
+    except Exception:
         bedrock_status = "error"
+
+    ollama_status = "unknown"
+    try:
+        local_client = get_llm_client("local")
+        ollama_status = "connected" if local_client.check_connection() else "disconnected"
+    except Exception:
+        ollama_status = "error"
 
     # Check vector store
     vector_store_status = "unknown"
     try:
-        nova_client = NovaClient()
-        vector_store = VectorStore(nova_client)
+        embedding_client = get_embedding_client(active_mode)
+        vector_store = VectorStore(embedding_client)
         if vector_store.check_connection():
             vector_store_status = "connected"
         else:
             vector_store_status = "disconnected"
-    except:
+    except Exception:
         vector_store_status = "error"
 
     # Check database
@@ -106,7 +128,7 @@ async def health_check():
 
         with engine.connect() as conn:
             database_status = "connected"
-    except:
+    except Exception:
         database_status = "error"
 
     return JSONResponse(
@@ -114,9 +136,12 @@ async def health_check():
             "status": "healthy",
             "version": "1.0.0",
             "timestamp": datetime.utcnow().isoformat(),
+            "processing_mode": active_mode,
             "services": {
                 "database": database_status,
+                "llm": llm_status,
                 "aws_bedrock": bedrock_status,
+                "ollama": ollama_status,
                 "vector_store": vector_store_status,
             },
         }

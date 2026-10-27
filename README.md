@@ -1,6 +1,6 @@
 ﻿<div align="center">
 
-# CFOne
+# CASHFLOW
 
 ### Autonomous AI Chief Financial Officer for SMEs
 

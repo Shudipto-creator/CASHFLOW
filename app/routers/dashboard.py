@@ -10,7 +10,8 @@ from datetime import datetime, timedelta
 from app.database import get_db
 from app import models
 from app.dependencies import get_current_user
-from app.services.nova_client import NovaClient
+from app.services.llm_factory import get_llm_client
+from app.services.mode_service import get_processing_mode
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -121,8 +122,8 @@ def _extract_financial_data(report_data: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     if revenue == 0 and expenses == 0:
-        revenue = 100000
-        expenses = 80000
+        revenue = 0.0
+        expenses = 0.0
 
     net_profit = revenue - expenses
     profit_margin = (net_profit / revenue * 100) if revenue > 0 else 0
@@ -200,46 +201,32 @@ def _generate_revenue_waterfall(financial_data: Dict[str, Any]) -> RevenueWaterf
             ))
         items.append(WaterfallItem(name="Total Revenue", value=round(revenue, 2), itemStyle={"color": "#10b981"}))
     else:
-        starting_base = revenue * 0.60
-        new_customers = revenue * 0.28
-        expansion = revenue * 0.15
-        churn = -revenue * 0.08
-        discounts = -revenue * 0.05
-        items = [
-            WaterfallItem(name="Starting Base", value=starting_base, itemStyle={"color": "#10b981"}),
-            WaterfallItem(name="New Customers", value=new_customers, itemStyle={"color": "#34d399"}),
-            WaterfallItem(name="Expansion", value=expansion, itemStyle={"color": "#6ee7b7"}),
-            WaterfallItem(name="Churn", value=churn, itemStyle={"color": "#f87171"}),
-            WaterfallItem(name="Discounts", value=discounts, itemStyle={"color": "#fb7185"}),
-            WaterfallItem(name="Ending Revenue", value=revenue, itemStyle={"color": "#10b981"}),
-        ]
+        items = []
 
     return RevenueWaterfall(items=items, total=revenue)
 
 
 def _generate_variance_analysis(financial_data: Dict[str, Any]) -> List[VarianceItem]:
     """Generate budget vs actual variance using real expense breakdown when available."""
-    revenue = financial_data.get("revenue", 100000)
-    expenses = financial_data.get("expenses", 80000)
+    revenue = financial_data.get("revenue", 0)
+    expenses = financial_data.get("expenses", 0)
     expense_breakdown_raw = financial_data.get("expense_breakdown_raw", [])
 
-    if revenue == 0:
-        revenue = 100000
-    if expenses == 0:
-        expenses = 80000
+    if revenue == 0 and not expense_breakdown_raw:
+        return []
 
-    # Revenue row is always first
-    items = [
-        VarianceItem(
-            category="Revenue",
-            budget=round(revenue * 0.95, 2),
-            actual=round(revenue, 2),
-            variance_percent=round(((revenue - revenue * 0.95) / (revenue * 0.95)) * 100, 2),
+    items = []
+    if revenue > 0:
+        items.append(
+            VarianceItem(
+                category="Revenue",
+                budget=round(revenue * 0.95, 2),
+                actual=round(revenue, 2),
+                variance_percent=round(((revenue - revenue * 0.95) / (revenue * 0.95)) * 100, 2),
+            )
         )
-    ]
 
     if expense_breakdown_raw:
-        # Use real category actuals; derive budget as 90% of actual (conservative plan)
         for item in expense_breakdown_raw[:4]:
             actual = float(item.get("amount") or 0)
             if actual <= 0:
@@ -252,33 +239,6 @@ def _generate_variance_analysis(financial_data: Dict[str, Any]) -> List[Variance
                 actual=round(actual, 2),
                 variance_percent=variance_pct,
             ))
-    else:
-        items += [
-            VarianceItem(
-                category="COGS",
-                budget=round(revenue * 0.30, 2),
-                actual=round(expenses * 0.30, 2),
-                variance_percent=round(((expenses * 0.30 - revenue * 0.30) / (revenue * 0.30)) * 100, 2) if revenue * 0.30 > 0 else 0,
-            ),
-            VarianceItem(
-                category="Marketing",
-                budget=round(revenue * 0.12, 2),
-                actual=round(expenses * 0.20, 2),
-                variance_percent=round(((expenses * 0.20 - revenue * 0.12) / (revenue * 0.12)) * 100, 2) if revenue * 0.12 > 0 else 0,
-            ),
-            VarianceItem(
-                category="Operations",
-                budget=round(revenue * 0.18, 2),
-                actual=round(expenses * 0.25, 2),
-                variance_percent=round(((expenses * 0.25 - revenue * 0.18) / (revenue * 0.18)) * 100, 2) if revenue * 0.18 > 0 else 0,
-            ),
-            VarianceItem(
-                category="R&D",
-                budget=round(revenue * 0.10, 2),
-                actual=round(expenses * 0.15, 2),
-                variance_percent=round(((expenses * 0.15 - revenue * 0.10) / (revenue * 0.10)) * 100, 2) if revenue * 0.10 > 0 else 0,
-            ),
-        ]
 
     return items
 
@@ -354,13 +314,9 @@ def _generate_burn_rate_chart(analysis_id: str, db: Session, current_user_id: st
     else:
         # Fallback to current analysis data if no history
         monthly_burn = financial_data.get("monthly_burn_rate", 0)
-        if monthly_burn == 0:
-            monthly_burn = financial_data.get("expenses", 80000) / 12
-        
+
         cash = financial_data.get("cash_balance", 0)
-        if cash == 0:
-            cash = financial_data.get("revenue", 100000) * 0.15
-        
+
         runway = financial_data.get("runway_months", 0)
         if runway == 0 and monthly_burn > 0:
             runway = cash / monthly_burn
@@ -390,7 +346,7 @@ def _generate_expense_breakdown(financial_data: Dict[str, Any]) -> List[ExpenseI
             return items
 
     if expenses == 0:
-        expenses = 80000
+        return []
 
     return [
         ExpenseItem(name="Salaries", value=round(expenses * 0.45, 2)),
@@ -649,21 +605,22 @@ Guidelines:
 - Always output valid JSON"""
     
     try:
-        logger.info(f"Generating insights for analysis {request.analysis_id}")
-        nova = NovaClient()
+        mode = get_processing_mode()
+        logger.info(f"Generating insights for analysis {request.analysis_id} (mode={mode})")
+        llm_client = get_llm_client(mode)
         
-        result = nova.invoke_agent(
+        result = llm_client.invoke_agent(
             prompt=chart_summary,
             system_prompt=system_prompt,
             temperature=0.3,  # Lower temperature for more consistent financial analysis
             max_tokens=2000,
         )
         
-        logger.info(f"Nova response received: {result}")
+        logger.info(f"Insights LLM response received ({mode}): {result}")
         
-        # Handle error responses from Nova
+        # Handle error responses from LLM
         if isinstance(result, dict) and "error" in result:
-            logger.error(f"Nova error: {result['error']}")
+            logger.error(f"LLM error ({mode}): {result['error']}")
             # Return default insights on error
             return InsightResponse(
                 top_insights=[
@@ -681,7 +638,7 @@ Guidelines:
                     "Monitor burn rate trends",
                     "Assess revenue sustainability"
                 ],
-                generated_by="Amazon Nova 2 Lite (Manual Fallback)",
+                generated_by="Manual Fallback" if mode == "local" else "Amazon Nova 2 Lite (Manual Fallback)",
             )
         
         # Extract insights data
@@ -719,7 +676,7 @@ Guidelines:
             top_insights=top_insights,
             risks=risks,
             recommendations=recommendations,
-            generated_by="Amazon Nova 2 Lite",
+            generated_by="Ollama (Local)" if mode == "local" else "Amazon Nova 2 Lite",
         )
         
     except Exception as exc:
@@ -741,5 +698,5 @@ Guidelines:
                 "Monitor expense growth",
                 "Track runway metrics"
             ],
-            generated_by="Amazon Nova 2 Lite (Fallback)",
+            generated_by="Insight Fallback",
         )

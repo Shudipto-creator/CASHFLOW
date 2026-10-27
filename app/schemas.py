@@ -51,6 +51,11 @@ class DocumentResponse(BaseModel):
     document_id: str
     filename: str
     document_type: Optional[str]
+    suggested_document_type: Optional[str] = None
+    classification_confidence: Optional[float] = None
+    classification_status: str = "needs_review"
+    document_readable: Optional[bool] = None
+    classification_message: Optional[str] = None
     size_bytes: int
     uploaded_at: datetime
     processed: bool
@@ -80,10 +85,15 @@ class DocumentUploadResponse(BaseModel):
     documents: List[DocumentResponse]
 
 
+class DocumentClassificationUpdate(BaseModel):
+    document_type: str
+
+
 # Analysis Schemas
 class AnalysisRequest(BaseModel):
     document_ids: Optional[List[str]] = None
     analysis_type: Optional[str] = "full"  # "full" or "quick"
+    processing_mode: Optional[str] = None  # "aws" | "local" (defaults to app setting)
 
 
 class AnalysisResponse(BaseModel):
@@ -91,6 +101,7 @@ class AnalysisResponse(BaseModel):
     status: str
     estimated_completion: Optional[datetime] = None
     message: str
+    processing_mode: Optional[str] = None
 
 
 class AnalysisStatus(BaseModel):
@@ -100,6 +111,7 @@ class AnalysisStatus(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime]
     document_count: int
+    processing_mode: Optional[str] = None
 
 
 class AnalysisListResponse(BaseModel):
@@ -116,6 +128,18 @@ class ReportResponse(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime]
     report: Optional[Dict[str, Any]] = None
+
+
+class ChatMessageResponse(BaseModel):
+    id: int
+    role: str
+    content: str
+    status: str
+    created_at: datetime
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: List[ChatMessageResponse]
 
 
 # Health Check Schema
