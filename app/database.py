@@ -58,6 +58,23 @@ def _ensure_sqlite_columns():
 
     from sqlalchemy import text
 
+    # One-time rename of legacy "wilson_*" tables to "billflow_*"
+    renames = [
+        ("wilson_imports", "billflow_imports"),
+        ("wilson_transactions", "billflow_transactions"),
+    ]
+    with engine.connect() as conn:
+        for old, new in renames:
+            old_exists = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name=:n"), {"n": old}
+            ).fetchone()
+            new_exists = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name=:n"), {"n": new}
+            ).fetchone()
+            if old_exists and not new_exists:
+                conn.execute(text(f"ALTER TABLE {old} RENAME TO {new}"))
+        conn.commit()
+
     alterations = [
         ("analyses", "processing_mode", "ALTER TABLE analyses ADD COLUMN processing_mode VARCHAR(20) DEFAULT 'aws'"),
     ]
