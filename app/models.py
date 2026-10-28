@@ -1,4 +1,4 @@
-"""Database models for CFOne"""
+"""Database models for CASHFLOW"""
 
 from sqlalchemy import Column, String, Integer, Float, Boolean, Text, ForeignKey, DateTime, JSON
 from sqlalchemy.sql import func

@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { FileText, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { getBankingAudit, verifyBankingAudit } from '../../services/api';
+import { useSignedBankingApi } from '../../hooks/useSignedBankingApi';
 
 export default function AuditLog() {
   const [entries, setEntries] = useState([]);
@@ -8,10 +9,21 @@ export default function AuditLog() {
   const [verifyResult, setVerifyResult] = useState(null);
   const [verifying, setVerifying] = useState(false);
 
+  const { signedRequest } = useSignedBankingApi();
+
+  const signedGetAudit = useCallback(
+    (config) => signedRequest(getBankingAudit, null, { ...config, url: '/api/banking/audit' }),
+    [signedRequest]
+  );
+  const signedVerifyAudit = useCallback(
+    (config) => signedRequest(verifyBankingAudit, null, { ...config, url: '/api/banking/audit/verify' }),
+    [signedRequest]
+  );
+
   const load = async (signal) => {
     setLoading(true);
     try {
-      const res = await getBankingAudit({ signal });
+      const res = await signedGetAudit({ signal });
       setEntries(res.data.audit || []);
     } catch (error) {
       if (error.name === 'CanceledError') return;
@@ -31,7 +43,7 @@ export default function AuditLog() {
     setVerifying(true);
     setVerifyResult(null);
     try {
-      const res = await verifyBankingAudit();
+      const res = await signedVerifyAudit();
       setVerifyResult(res.data.result || '');
     } catch (error) {
       setVerifyResult(error.response?.data?.detail || 'Verification failed');

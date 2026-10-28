@@ -1,4 +1,4 @@
-"""Configuration management for CFOne application"""
+"""Configuration management for CASHFLOW application"""
 
 from pathlib import Path
 from pydantic.v1 import BaseSettings
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
 
     # Database
-    database_url: str = "sqlite:///./data/cfone.db"
+    database_url: str = "sqlite:///./data/cashflow.db"
 
     # File Storage
     upload_dir: str = "./uploads"

@@ -26,6 +26,14 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
+      const url = error.config?.url || '';
+      // Don't auto-logout for banking API 401s. These are typically
+      // signing/verification failures (cryptographic proof of intent), not
+      // auth/session failures. Let the banking components surface an error
+      // message instead of logging the user out.
+      if (url.includes('/api/banking/')) {
+        return Promise.reject(error);
+      }
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.location.href = '/login';
@@ -114,29 +122,31 @@ export const analyzePortfolio = (data) =>
   api.post('/api/portfolio/analyze', data);
 
 // Zero-Trust banking security layer (backend bridge over okgate + SecureBankGate)
-export const getBankingTools = (config) => api.get('/api/banking/tools', config);
+export const getBankingTools = (data, config) => api.get('/api/banking/tools', config || {});
 export const bankingCall = (data, config) => api.post('/api/banking/call', data, config);
-export const getBankingStatus = (config) => api.get('/api/banking/status', config);
-export const getBankingSpend = (config) => api.get('/api/banking/spend', config);
+export const getBankingStatus = (data, config) => api.get('/api/banking/status', config || {});
+export const getBankingSpend = (data, config) => api.get('/api/banking/spend', config || {});
 export const getBankingTier = (tool, amount) =>
   api.get('/api/banking/tier', { params: { tool, amount } });
-export const getBankingAudit = (config) => api.get('/api/banking/audit', config);
-export const verifyBankingAudit = (config) => api.get('/api/banking/audit/verify', config);
-export const getBankingApprovals = (config) => api.get('/api/banking/approvals', config);
+export const getBankingAudit = (data, config) => api.get('/api/banking/audit', config || {});
+export const verifyBankingAudit = (data, config) => api.get('/api/banking/audit/verify', config || {});
+export const getBankingApprovals = (data, config) => api.get('/api/banking/approvals', config || {});
 
-export const prepareBankingTransfer = (data) =>
-  api.post('/api/banking/transfer/prepare', data);
-export const executeBankingTransfer = (data) =>
-  api.post('/api/banking/transfer/execute', data);
-export const approveBankingTransfer = (intentId, data) =>
-  api.post(`/api/banking/transfer/execute/${encodeURIComponent(intentId)}/approve`, data);
+export const prepareBankingTransfer = (data, config) =>
+  api.post('/api/banking/transfer/prepare', data, config);
+export const executeBankingTransfer = (data, config) =>
+  api.post('/api/banking/transfer/execute', data, config);
+export const approveBankingTransfer = (data, config) =>
+  api.post(`/api/banking/transfer/execute/${encodeURIComponent(config?.intentId || '')}/approve`, data, config);
 
-export const startMfaChallenge = (data) => api.post('/api/banking/mfa/challenge', data);
-export const getMfaCode = (challengeId) =>
-  api.get(`/api/banking/mfa/code/${encodeURIComponent(challengeId)}`);
-export const verifyMfaCode = (data) => api.post('/api/banking/mfa/verify', data);
+export const startMfaChallenge = (data, config) =>
+  api.post('/api/banking/mfa/challenge', data, config);
+export const getMfaCode = (challengeId, config) =>
+  api.get(`/api/banking/mfa/code/${encodeURIComponent(challengeId)}`, config);
+export const verifyMfaCode = (data, config) =>
+  api.post('/api/banking/mfa/verify', data, config);
 
-export const killBanking = (data) => api.post('/api/banking/kill', data);
-export const resumeBanking = () => api.post('/api/banking/resume');
+export const killBanking = (data, config) => api.post('/api/banking/kill', data, config);
+export const resumeBanking = (data, config) => api.post('/api/banking/resume', data, config);
 
 export default api;

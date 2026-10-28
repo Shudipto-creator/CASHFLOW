@@ -22,6 +22,7 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -100,8 +101,22 @@ class GateClient:
         self.run_id = run_id
         self.package = package
         self.timeout_s = timeout_s
-        self._npx = npx or _npx_argv()[0]
-        self._npx_prefix = _npx_argv()[1:] if npx is None else []
+        npx_argv = _npx_argv()
+        if npx is not None:
+            self._npx = npx
+            self._npx_prefix = []
+            self._npx_path = npx
+        elif os.name == "nt" and npx_argv[0] == "cmd":
+            # Windows: ["cmd", "/c", "C:\\...\\npx.cmd"]. Store the actual
+            # npx path separately so _cli can invoke it via the shell with
+            # proper quoting for paths containing spaces.
+            self._npx = "cmd"
+            self._npx_prefix = npx_argv[1:]
+            self._npx_path = npx_argv[2]
+        else:
+            self._npx = npx_argv[0]
+            self._npx_prefix = []
+            self._npx_path = npx_argv[0]
         self._client: Optional[Client] = None
 
     # -- lifecycle ---------------------------------------------------------
@@ -203,13 +218,35 @@ class GateClient:
     # -- administration (okgate's own CLI, not MCP) ------------------------
 
     async def _cli(self, *args: str) -> str:
-        argv = [self._npx, *self._npx_prefix, "-y", "-p", self.package, "okgate", *args]
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=str(self.root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
+        if os.name == "nt":
+            # Windows: npx is a .cmd/.bat file that must be invoked through
+            # cmd /c. create_subprocess_exec does not reliably quote paths
+            # containing spaces for cmd /c parsing. Use create_subprocess_shell
+            # instead, which prepends "cmd /c " automatically, and pass only
+            # the npx executable and its arguments (properly quoted via
+            # subprocess.list2cmdline to handle paths with spaces).
+            cmd = subprocess.list2cmdline(
+                [self._npx_path, "-y", "-p", self.package, "okgate", *args]
+            )
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                cwd=str(self.root),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+        else:
+            proc = await asyncio.create_subprocess_exec(
+                self._npx_path,
+                *(self._npx_prefix or []),
+                "-y",
+                "-p",
+                self.package,
+                "okgate",
+                *args,
+                cwd=str(self.root),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
         out, _ = await proc.communicate()
         return out.decode("utf-8", errors="replace").strip()
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -20,6 +20,7 @@ import LoadingSpinner from '../components/Common/LoadingSpinner';
 import ErrorBoundary from '../components/Common/ErrorBoundary';
 import TierBadge from '../components/Security/TierBadge';
 import MfaChallenge from '../components/Security/MfaChallenge';
+import { useSignedBankingApi } from '../hooks/useSignedBankingApi';
 import { Send, Wallet, CreditCard, AlertCircle, CheckCircle2, ShieldAlert } from 'lucide-react';
 
 const DEBTOR_ACCOUNT = 'acc_cmb_001';
@@ -63,13 +64,49 @@ export default function Banking() {
   const [submitLoading, setSubmitLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Zero-Trust signing: register client public key on mount
+  const { registerPublicKey, signedRequest } = useSignedBankingApi();
+  useEffect(() => {
+    registerPublicKey();
+  }, [registerPublicKey]);
+
+  // Signed wrappers for banking API calls
+  const signedBankingCall = useCallback(
+    (data, config) => signedRequest(bankingCall, data, { ...config, url: '/api/banking/call' }),
+    [signedRequest]
+  );
+  const signedPrepareTransfer = useCallback(
+    (data, config) => signedRequest(prepareBankingTransfer, data, { ...config, url: '/api/banking/transfer/prepare' }),
+    [signedRequest]
+  );
+  const signedExecuteTransfer = useCallback(
+    (data, config) => signedRequest(executeBankingTransfer, data, { ...config, url: '/api/banking/transfer/execute' }),
+    [signedRequest]
+  );
+  const signedApproveTransfer = useCallback(
+    (intentId, data, config) =>
+      signedRequest(approveBankingTransfer, data, {
+        ...config,
+        url: `/api/banking/transfer/execute/${encodeURIComponent(intentId)}/approve`,
+      }),
+    [signedRequest]
+  );
+  const signedKill = useCallback(
+    (data, config) => signedRequest(killBanking, data, { ...config, url: '/api/banking/kill' }),
+    [signedRequest]
+  );
+  const signedResume = useCallback(
+    (config) => signedRequest(resumeBanking, null, { ...config, url: '/api/banking/resume' }),
+    [signedRequest]
+  );
+
   useEffect(() => {
     const controller = new AbortController();
     const load = async () => {
       try {
         const [accRes, txRes] = await Promise.all([
-          bankingCall({ tool: 'get-accounts', args: {} }, { signal: controller.signal }),
-          bankingCall({ tool: 'get-transactions', args: { count: 10 } }, { signal: controller.signal }),
+          signedBankingCall({ tool: 'get-accounts', args: {} }, { signal: controller.signal }),
+          signedBankingCall({ tool: 'get-transactions', args: { count: 10 } }, { signal: controller.signal }),
         ]);
         setAccounts(((accRes.data.value || {}).items || []));
         setTransactions(((txRes.data.value || {}).items || []));
@@ -101,7 +138,7 @@ export default function Banking() {
       return;
     }
     try {
-      const res = await prepareBankingTransfer({
+      const res = await signedPrepareTransfer({
         debtor_account_id: DEBTOR_ACCOUNT,
         creditor: {
           name: creditorName,
@@ -118,13 +155,13 @@ export default function Banking() {
         setStage('awaiting-mfa');
         setMfaNeeded(true);
         // Start the challenge and surface the simulated SMS code.
-        const chalRes = await startMfaChallenge({
+        const chalRes = await signedRequest(startMfaChallenge, {
           subject: 'account-holder',
           purpose: 'strong verification for a Red-tier transfer',
-        });
+        }, { url: '/api/banking/mfa/challenge' });
         const cid = chalRes.data.challenge_id;
         setMfaChallengeId(cid);
-        const codeRes = await getMfaCode(cid);
+        const codeRes = await signedRequest(getMfaCode, cid, { url: `/api/banking/mfa/code/${cid}` });
         setMfaDeliveredCode(codeRes.data.code);
       } else if (data.needs_confirmation) {
         setStage('awaiting-confirmation');
@@ -148,7 +185,7 @@ export default function Banking() {
     setError(null);
     const amt = Number(amount);
     try {
-      const res = await prepareBankingTransfer({
+      const res = await signedPrepareTransfer({
         debtor_account_id: DEBTOR_ACCOUNT,
         creditor: {
           name: creditorName,
@@ -193,7 +230,7 @@ export default function Banking() {
     setSubmitLoading(true);
     setError(null);
     try {
-      const res = await verifyMfaCode({ challenge_id: mfaChallengeId, code: mfaCode });
+      const res = await signedRequest(verifyMfaCode, { challenge_id: mfaChallengeId, code: mfaCode }, { url: '/api/banking/mfa/verify' });
       if (!res.data.valid) {
         setError('Invalid code');
         setSubmitLoading(false);
@@ -202,7 +239,7 @@ export default function Banking() {
       setMfaVerified(true);
       // Re-prepare with the verified code.
       const amt = Number(amount);
-      const prepRes = await prepareBankingTransfer({
+      const prepRes = await signedPrepareTransfer({
         debtor_account_id: DEBTOR_ACCOUNT,
         creditor: {
           name: creditorName,
@@ -240,7 +277,7 @@ export default function Banking() {
     setSubmitLoading(true);
     setError(null);
     try {
-      const res = await executeBankingTransfer({ intent_id: intentId });
+      const res = await signedExecuteTransfer({ intent_id: intentId });
       const data = res.data;
       setOutcome(data);
       if (data.needs_approval) {
@@ -267,8 +304,8 @@ export default function Banking() {
     setSubmitLoading(true);
     setError(null);
     try {
-      await approveBankingTransfer(intentId, { approval_id: approvalId });
-      const res = await executeBankingTransfer({ intent_id: intentId });
+      await signedApproveTransfer(intentId, { approval_id: approvalId });
+      const res = await signedExecuteTransfer({ intent_id: intentId });
       const data = res.data;
       setOutcome(data);
       if (data.ok) {
@@ -288,7 +325,7 @@ export default function Banking() {
 
   const handleKill = async () => {
     try {
-      await killBanking({ reason: 'operator pressed the kill switch' });
+      await signedKill({ reason: 'operator pressed the kill switch' });
       setMessage('Kill switch engaged');
     } catch (err) {
       setError('Kill failed');
@@ -297,7 +334,7 @@ export default function Banking() {
 
   const handleResume = async () => {
     try {
-      await resumeBanking();
+      await signedResume();
       setMessage('Service resumed');
     } catch (err) {
       setError('Resume failed');

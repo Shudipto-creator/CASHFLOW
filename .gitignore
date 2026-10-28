@@ -222,3 +222,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Zero-Trust banking secrets: encrypted signing keys + mTLS certs.
+# NEVER commit these — the passphrase is injected via environment variables.
+app/secrets/
+banking-agent/secrets/

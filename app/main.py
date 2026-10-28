@@ -1,4 +1,4 @@
-"""FastAPI main application for CFOne"""
+"""FastAPI main application for CASHFLOW"""
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from app.config import get_settings
@@ -9,6 +9,9 @@ from app.routers import auth, documents, analysis, ask_cfo, dashboard, settings 
 from app.services.llm_factory import get_embedding_client, get_llm_client
 from app.services.mode_service import get_processing_mode
 from app.services.embeddings import VectorStore
+from app.core.security.keys import load_private_key
+from app.core.security.audit_ledger import init_ledger
+from pathlib import Path
 from datetime import datetime
 import logging
 import os
@@ -23,7 +26,7 @@ settings = get_settings()
 
 # Create FastAPI app
 app = FastAPI(
-    title="CFOne API",
+    title="CASHFLOW API",
     description="AI Chief Financial Officer for small and medium enterprises",
     version="1.0.0",
     docs_url="/docs",
@@ -49,28 +52,55 @@ app.include_router(portfolio.router)
 app.include_router(banking.router)
 
 
+# Signing key is stored on app.state.signing_private_key at startup.
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize application on startup"""
-    logger.info("Starting CFOne application...")
+    logger.info("Starting CASHFLOW application...")
 
     # Create required directories
     os.makedirs("data", exist_ok=True)
     os.makedirs("data/vector_store", exist_ok=True)
     os.makedirs("uploads", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
+    os.makedirs("app/secrets", exist_ok=True)
 
     # Initialize database
     logger.info("Initializing database...")
     init_db()
 
-    logger.info("CFOne application started successfully")
+    # Load Ed25519 signing key into memory (encrypted at rest, decrypted here)
+    passphrase = os.environ.get("KEY_PASSPHRASE")
+    enc_key_path = Path("app/secrets/signing_key.enc")
+    if passphrase and enc_key_path.exists():
+        try:
+            signing_key = load_private_key(passphrase, enc_key_path)
+            app.state.signing_private_key = signing_key
+            logger.info("Ed25519 signing key loaded into memory")
+        except Exception as exc:
+            logger.warning(f"Failed to load signing key: {exc}")
+            app.state.signing_private_key = None
+    else:
+        logger.warning(
+            "KEY_PASSPHRASE not set or signing_key.enc missing — "
+            "banking request signing will be disabled"
+        )
+        app.state.signing_private_key = None
+
+    # Initialize the tamper-evident decision ledger
+    ledger_path = Path("data/banking_decision_ledger.jsonl")
+    init_ledger(ledger_path)
+    logger.info("Banking decision ledger initialized")
+
+    logger.info("CASHFLOW application started successfully")
 
 
 @app.on_event("shutdown")
 async def shutdown_event(): 
     """Cleanup on shutdown"""
-    logger.info("Shutting down CFOne application...")
+    logger.info("Shutting down CASHFLOW application...")
 
 
 @app.get("/api/health")
@@ -152,7 +182,7 @@ async def health_check():
 async def root():
     """Root endpoint"""
     return {
-        "message": "CFOne API",
+        "message": "CASHFLOW API",
         "version": "1.0.0",
         "docs": "/docs",
         "health": "/api/health",

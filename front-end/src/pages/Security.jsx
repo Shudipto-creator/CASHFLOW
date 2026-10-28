@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import {
   getBankingSpend,
@@ -16,6 +16,7 @@ import TierBadge from '../components/Security/TierBadge';
 import KillSwitch from '../components/Security/KillSwitch';
 import ApprovalList from '../components/Security/ApprovalList';
 import AuditLog from '../components/Security/AuditLog';
+import { useSignedBankingApi } from '../hooks/useSignedBankingApi';
 
 const ICONS = {
   'get-accounts': LayoutDashboard,
@@ -36,24 +37,51 @@ export default function Security() {
   const [status, setStatus] = useState('');
   const [tools, setTools] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Zero-Trust signing: register client public key on mount
+  const { registerPublicKey, signedRequest, resetKeyPair } = useSignedBankingApi();
+  useEffect(() => {
+    registerPublicKey();
+  }, [registerPublicKey]);
+
+  // Signed wrappers for banking GET calls
+  const signedGetSpend = useCallback(
+    (config) => signedRequest(getBankingSpend, null, { ...config, url: '/api/banking/spend' }),
+    [signedRequest]
+  );
+  const signedGetStatus = useCallback(
+    (config) => signedRequest(getBankingStatus, null, { ...config, url: '/api/banking/status' }),
+    [signedRequest]
+  );
+  const signedGetTools = useCallback(
+    (config) => signedRequest(getBankingTools, null, { ...config, url: '/api/banking/tools' }),
+    [signedRequest]
+  );
 
   useEffect(() => {
     const controller = new AbortController();
     const load = async () => {
       try {
         const [spendRes, statusRes, toolsRes] = await Promise.all([
-          getBankingSpend({ signal: controller.signal }),
-          getBankingStatus({ signal: controller.signal }),
-          getBankingTools({ signal: controller.signal }),
+          signedGetSpend({ signal: controller.signal }),
+          signedGetStatus({ signal: controller.signal }),
+          signedGetTools({ signal: controller.signal }),
         ]);
         setSpend(spendRes.data.spent_today_cny ?? '0');
         setStatus(statusRes.data.status || '');
         setTools(toolsRes.data.tools || []);
         const text = (statusRes.data.status || '').toLowerCase();
         setTier(/red/.test(text) ? 'red' : /yellow/.test(text) ? 'yellow' : 'green');
+        setError(null);
       } catch (error) {
         if (error.name === 'CanceledError') return;
         console.error('Security load failed:', error);
+        setError(
+          error.response?.status === 401
+            ? 'Security request verification failed. Please refresh and try again.'
+            : 'Failed to load security data. Please try again.',
+        );
       } finally {
         setLoading(false);
       }
@@ -61,6 +89,40 @@ export default function Security() {
     load();
     return () => controller.abort();
   }, []);
+
+  const retry = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await resetKeyPair();
+      await registerPublicKey();
+    } catch (e) {
+      console.warn("[Security] Key reset failed:", e);
+    }
+    const controller = new AbortController();
+    try {
+      const [spendRes, statusRes, toolsRes] = await Promise.all([
+        signedGetSpend({ signal: controller.signal }),
+        signedGetStatus({ signal: controller.signal }),
+        signedGetTools({ signal: controller.signal }),
+      ]);
+      setSpend(spendRes.data.spent_today_cny ?? '0');
+      setStatus(statusRes.data.status || '');
+      setTools(toolsRes.data.tools || []);
+      const text = (statusRes.data.status || '').toLowerCase();
+      setTier(/red/.test(text) ? 'red' : /yellow/.test(text) ? 'yellow' : 'green');
+    } catch (error) {
+      if (error.name === 'CanceledError') return;
+      console.error('Security load failed:', error);
+      setError(
+        error.response?.status === 401
+          ? 'Security request verification failed. Please refresh and try again.'
+          : 'Failed to load security data. Please try again.',
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const Icon = ICONS[tools[0]] || Shield;
   return (
@@ -79,6 +141,27 @@ export default function Security() {
           </button>
         }
       />
+
+      {error && (
+        <div className="surface-card p-5 mb-5">
+          <div className="flex items-center gap-3 p-3 rounded-md border border-[var(--negative-color)]/40 bg-[var(--negative-color)]/5 text-[var(--negative-color)]">
+            <span className="shrink-0 h-4 w-4" aria-hidden="true">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+            </span>
+            <span className="text-xs font-medium text-[var(--negative-color)]">{error}</span>
+            <button
+              onClick={retry}
+              className="ml-auto btn-outline disabled:opacity-50 disabled:pointer-events-none uppercase tracking-[0.1em] text-xs px-3 py-1.5"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">

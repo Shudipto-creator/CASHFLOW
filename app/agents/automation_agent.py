@@ -19,7 +19,7 @@ class AutomationAgent(BaseAgent):
 
     SYSTEM_PROMPT = """You are a Compliance and Automation Agent. Identify upcoming tax deadlines, check for compliance issues, and suggest automation opportunities.
 Generate draft payment reminder emails. Recommend automated GST filing actions.
-Focus on Indian tax compliance (GST, Income Tax, TDS).
+Focus on multi-jurisdiction tax compliance (GST/VAT, income tax, sales tax, withholding tax) across China, the United States, India, and other countries.
 Return results in strict JSON format with clear deadlines and actionable suggestions.
 
 Output format must be valid JSON matching this structure:

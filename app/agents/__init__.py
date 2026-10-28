@@ -1,1 +1,1 @@
-"""AI agent modules for CFOne"""
+"""AI agent modules for CASHFLOW"""
