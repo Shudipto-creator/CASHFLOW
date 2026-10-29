@@ -149,4 +149,12 @@ export const verifyMfaCode = (data, config) =>
 export const killBanking = (data, config) => api.post('/api/banking/kill', data, config);
 export const resumeBanking = (data, config) => api.post('/api/banking/resume', data, config);
 
+// Zero-Trust banking security layer - FX (foreign exchange) endpoints
+export const getBankingToolsFX = (data, config = {}) =>
+  api.get('/api/banking/fx/rates', { ...config, params: data || config.params });
+export const convertCurrency = (data, config) =>
+  api.post('/api/banking/fx/convert', data, config);
+export const setFXRate = (data, config) =>
+  api.post('/api/banking/fx/rates', data, config);
+
 export default api;

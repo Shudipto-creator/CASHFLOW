@@ -147,8 +147,10 @@ CASHFLOW/
 ├── data/                         # Vector store & document data
 ├── uploads/                      # Document uploads
 ├── logs/                         # Application logs
+├── banking_agent/                # WeCom bot package (imported by app.main)
 ├── .gitignore                    # Git ignore rules
 ├── README.md                     # This file
+├── WECOM_SETUP.md                # WeCom channel setup guide
 └── requirements.txt              # Python dependencies
 ```
 
@@ -230,7 +232,63 @@ Required IAM permissions: `bedrock:InvokeModel`, `bedrock:InvokeModelWithRespons
 
 ---
 
-## Zero-Trust Banking API
+## Zero-Trust Architecture (Judges' Summary)
+
+CASHFLOW implements a production-grade Zero-Trust security layer for banking operations. The architecture enforces **Zero Trust** principles at every layer:
+
+### 1. Cryptographic Proof of Intent
+Every banking request from the frontend is **Ed25519-signed** client-side using the Web Crypto API. The signature covers the canonicalized request body (method + path + body + client ID), producing a **Semantic Transaction ID (STID)** — a unique fingerprint that prevents replay attacks and tampering. The backend verifies every signature before processing any request.
+
+### 2. Defense-in-Depth Architecture
+Security is enforced in four independent layers:
+
+| Layer | Component | Purpose |
+|-------|-----------|---------|
+| **L1** | Pydantic Schema Validation | Rejects malformed/injected payloads before they reach okgate |
+| **L2** | Canonicalization + SHA-256 | Deterministic signing for all requests |
+| **L3** | okgate Proxy | Enforces tier classification, MFA, confirmation, caps, loop breaker |
+| **L4** | Backend Re-signing | Ed25519 signature on every call forwarded to okgate |
+
+### 3. Tier Classification
+okgate classifies every call based on daily cumulative spend:
+
+| Tier | Condition | Behavior |
+|------|-----------|----------|
+| **Green** | Daily spend ≤ ¥1,000 | Execute automatically |
+| **Yellow** | ¥1,000 < spend ≤ ¥5,000 | Requires user confirmation |
+| **Red** | spend > ¥5,000 | Requires strong MFA verification |
+
+### 4. RBAC (Role-Based Access Control)
+Critical operations require admin privileges:
+
+| Operation | Required Role |
+|-----------|---------------|
+| Kill Switch | **Admin** |
+| Resume Service | **Admin** |
+| All other operations | User |
+
+Non-admin users receive `403 Forbidden` when attempting kill/resume.
+
+### 5. Immutable Audit Log
+Two independent, hash-chained audit logs provide tamper evidence:
+- **okgate audit.jsonl** — okgate's native audit chain
+- **Backend decision ledger** — Independent hash-chained log of all security decisions
+
+The `verify chain` button on the Security page checks both chains for integrity.
+
+### 6. Omnichannel: Web PWA + WeCom
+To make the security layer accessible everywhere, CASHFLOW supports two channels:
+
+- **Web PWA**: Progressive Web App installable via "Add to Home Screen" on any device
+- **WeCom (企业微信)**: WeChat Work intelligent bot for Chinese enterprise users
+
+> We explicitly chose WeCom over consumer IM platforms because our target users are bank staff and SME owners who already use WeCom daily. The WebSocket long-connection mode ensures zero network friction inside China, while our backend remains channel-agnostic — the same Zero-Trust `okgate` and cryptographic signing pipeline serves both the Web dashboard and the IM channel.
+
+Both channels share the **same backend service functions**, ensuring identical security enforcement regardless of access method.
+
+---
+
+## Endpoints under `/api/banking`
 
 All endpoints under `/api/banking` require JWT auth + Ed25519 request signing.
 
@@ -245,13 +303,15 @@ All endpoints under `/api/banking` require JWT auth + Ed25519 request signing.
 | `POST` | `/api/banking/transfer/execute` | Phase 2: settle prepared intent |
 | `POST` | `/api/banking/transfer/execute/{id}/approve` | Human approve then re-execute |
 | `POST` | `/api/banking/mfa/challenge` | Start Red-tier MFA challenge |
-| `GET` | `/api/banking/mfa/code/{id}` | Return delivered code (SMS sim) |
+| `GET` | `/api/banking/mfa/code/{id}` | Return delivered code (SMS sim, demo mode only) |
 | `POST` | `/api/banking/mfa/verify` | Submit MFA code |
-| `POST` | `/api/banking/kill` | Halt all calls (kill switch) |
-| `POST` | `/api/banking/resume` | Resume after kill switch |
+| `POST` | `/api/banking/kill` | Halt all calls (kill switch, admin only) |
+| `POST` | `/api/banking/resume` | Resume after kill switch (admin only) |
 | `GET` | `/api/banking/approvals` | Pending approvals |
 | `GET` | `/api/banking/audit` | Audit entries (okgate) |
 | `GET` | `/api/banking/audit/verify` | Verify audit chain (okgate + ledger) |
+| `POST` | `/api/banking/telegram/webhook` | Telegram webhook (deprecated, use WeCom) |
+| `POST` | `/api/settings/telegram/webhook` | WeCom webhook |
 
 ---
 

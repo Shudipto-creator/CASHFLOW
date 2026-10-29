@@ -17,6 +17,7 @@ import KillSwitch from '../components/Security/KillSwitch';
 import ApprovalList from '../components/Security/ApprovalList';
 import AuditLog from '../components/Security/AuditLog';
 import { useSignedBankingApi } from '../hooks/useSignedBankingApi';
+import { WeComBotWidget } from '../components/WeComBotWidget';
 
 const ICONS = {
   'get-accounts': LayoutDashboard,
@@ -166,6 +167,7 @@ export default function Security() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <KillSwitch />
+          <WeComBotWidget />
         </div>
         <div>
           <div className="surface-card p-5 mb-5">

@@ -20,8 +20,9 @@ class Settings(BaseSettings):
 
     # Application Settings
     app_env: str = "development"
-    debug: bool = True
-    secret_key: str = "CHANGE_ME_IN_PRODUCTION"  # Override in .env
+    debug: bool = False
+    secret_key: str = ""
+    banking_backend_mode: str = "real"
     jwt_expiration_hours: int = 24
     jwt_algorithm: str = "HS256"
 
@@ -69,4 +70,10 @@ class Settings(BaseSettings):
 @lru_cache()
 def get_settings() -> Settings:
     """Get cached settings instance"""
-    return Settings()
+    settings = Settings()
+    if settings.app_env.lower() in {"production", "staging"}:
+        if len(settings.secret_key) < 32:
+            raise RuntimeError("SECRET_KEY must be configured with at least 32 characters")
+        if settings.debug:
+            raise RuntimeError("DEBUG must be false in production")
+    return settings

@@ -16,4 +16,4 @@ Three parts, deliberately separable so scenario owners can work in parallel:
     self-assessment.
 """
 
-__all__ = ["bank", "gate"]
+__all__ = ["bank", "gate", "wecom_bot"]

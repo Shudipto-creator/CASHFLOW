@@ -11,10 +11,13 @@ from app.services.mode_service import get_processing_mode
 from app.services.embeddings import VectorStore
 from app.core.security.keys import load_private_key
 from app.core.security.audit_ledger import init_ledger
+from app.core.security.mtls import check_mtls_readiness, build_mtls_client
+from banking_agent.wecom_bot import get_wecom_bot, is_wecom_available
 from pathlib import Path
 from datetime import datetime
 import logging
 import os
+import asyncio
 
 # Configure logging
 logging.basicConfig(
@@ -93,6 +96,41 @@ async def startup_event():
     ledger_path = Path("data/banking_decision_ledger.jsonl")
     init_ledger(ledger_path)
     logger.info("Banking decision ledger initialized")
+
+    # Initialize mTLS client for backend->bank channel
+    mtls_client = build_mtls_client()
+    if mtls_client:
+        app.state.mtls_client = mtls_client
+        logger.info("mTLS client initialized for backend->bank channel")
+    elif check_mtls_readiness():
+        app.state.mtls_client = build_mtls_client()
+        logger.info("mTLS client initialized for backend->bank channel")
+    else:
+        logger.warning(
+            "mTLS not configured for backend->bank channel. "
+            "Set BANK_CLIENT_CERT_PATH, BANK_CLIENT_KEY_PATH, BANK_CA_CERT_PATH "
+            "in .env to enable mTLS."
+        )
+        app.state.mtls_client = None
+
+    # Initialize WeCom bot for IM channel
+    wecom_bot = get_wecom_bot()
+    if wecom_bot and wecom_bot._bot:
+        try:
+            await wecom_bot.initialize()
+            app.state.wecom_bot = wecom_bot
+            logger.info("WeCom bot initialized for IM channel")
+            # Start WeCom polling in background
+            asyncio.create_task(wecom_bot.start())
+        except Exception as exc:
+            logger.warning(f"Failed to initialize WeCom bot: {exc}")
+            app.state.wecom_bot = None
+    else:
+        logger.info(
+            "WeCom bot not configured. Set WECOM_BOT_ID and WECOM_BOT_SECRET "
+            "in .env to enable IM channel."
+        )
+        app.state.wecom_bot = None
 
     logger.info("CASHFLOW application started successfully")
 

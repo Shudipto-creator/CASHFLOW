@@ -77,6 +77,7 @@ def _ensure_sqlite_columns():
 
     alterations = [
         ("analyses", "processing_mode", "ALTER TABLE analyses ADD COLUMN processing_mode VARCHAR(20) DEFAULT 'aws'"),
+        ("users", "role", "ALTER TABLE users ADD COLUMN role VARCHAR(20) DEFAULT 'user'"),
     ]
 
     with engine.connect() as conn:
