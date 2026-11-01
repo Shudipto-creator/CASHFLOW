@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "CASHFLOW",
+  "short_name": "CASHFLOW",
+  "description": "A clearer view of your money.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#090a09",
+  "theme_color": "#090a09",
+  "icons": [
+    {
+      "src": "/icons/cashflow.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -77,6 +77,9 @@ from app.schemas import (  # noqa: E402
     TransferExecuteApproveRequest as SchemaTransferExecuteApprove,
     CallRequest as SchemaCallRequest,
     CreditorAccount,
+    MfaChallengeRequest as SchemaMfaChallengeRequest,
+    MfaVerifyRequest as SchemaMfaVerifyRequest,
+    KillRequest as SchemaKillRequest,
 )
 
 router = APIRouter(prefix="/api/banking", tags=["banking-security"])
@@ -354,7 +357,7 @@ async def list_tools(
 @router.post("/call")
 async def generic_call(
     request: Request,
-    payload: CallRequest,
+    payload: SchemaCallRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Generic SecureBankGate.call -- any tool, any tier.
@@ -448,7 +451,7 @@ async def generic_call(
 @router.post("/transfer/prepare")
 async def transfer_prepare(
     request: Request,
-    payload: TransferPrepareRequest,
+    payload: SchemaTransferPrepare,
     user: models.User = Depends(get_current_user),
 ):
     """Phase 1 of a transfer: price + reserve an intent (may need confirmation/MFA).
@@ -570,7 +573,7 @@ async def transfer_prepare(
 @router.post("/transfer/execute")
 async def transfer_execute(
     request: Request,
-    payload: TransferExecuteRequest,
+    payload: SchemaTransferExecute,
     user: models.User = Depends(get_current_user),
 ):
     """Phase 2 of a transfer: settle a prepared intent (may need approval)."""
@@ -658,7 +661,7 @@ async def transfer_execute(
 async def transfer_execute_approve(
     request: Request,
     intent_id: str,
-    payload: TransferExecuteApproveRequest,
+    payload: SchemaTransferExecuteApprove,
     user: models.User = Depends(get_current_user),
 ):
     """Human approves a held execute-transfer, then re-executes it."""
@@ -739,7 +742,7 @@ async def transfer_execute_approve(
 @router.post("/mfa/challenge")
 async def mfa_challenge(
     request: Request,
-    payload: MfaChallengeRequest,
+    payload: SchemaMfaChallengeRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Start a Red-tier MFA challenge. Code is stored server-side (SMS sim)."""
@@ -795,7 +798,7 @@ async def mfa_code(
 @router.post("/mfa/verify")
 async def mfa_verify(
     request: Request,
-    payload: MfaVerifyRequest,
+    payload: SchemaMfaVerifyRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Submit a code against a challenge. Consumes the challenge on success."""
@@ -818,7 +821,7 @@ async def mfa_verify(
 @router.post("/kill")
 async def kill_switch(
     request: Request,
-    payload: KillRequest,
+    payload: SchemaKillRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Halt every call (kill switch). Requires admin role."""
@@ -1024,7 +1027,7 @@ async def audit_verify(
 @router.post("/transfer/prepare")
 async def transfer_prepare(
     request: Request,
-    payload: TransferPrepareRequest,
+    payload: SchemaTransferPrepare,
     user: models.User = Depends(get_current_user),
 ):
     """Phase 1 of a transfer: price + reserve an intent (may need confirmation/MFA).
@@ -1146,7 +1149,7 @@ async def transfer_prepare(
 @router.post("/transfer/execute")
 async def transfer_execute(
     request: Request,
-    payload: TransferExecuteRequest,
+    payload: SchemaTransferExecute,
     user: models.User = Depends(get_current_user),
 ):
     """Phase 2 of a transfer: settle a prepared intent (may need approval)."""
@@ -1234,7 +1237,7 @@ async def transfer_execute(
 async def transfer_execute_approve(
     request: Request,
     intent_id: str,
-    payload: TransferExecuteApproveRequest,
+    payload: SchemaTransferExecuteApprove,
     user: models.User = Depends(get_current_user),
 ):
     """Human approves a held execute-transfer, then re-executes it."""
@@ -1315,7 +1318,7 @@ async def transfer_execute_approve(
 @router.post("/mfa/challenge")
 async def mfa_challenge(
     request: Request,
-    payload: MfaChallengeRequest,
+    payload: SchemaMfaChallengeRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Start a Red-tier MFA challenge. Code is stored server-side (SMS sim)."""
@@ -1371,7 +1374,7 @@ async def mfa_code(
 @router.post("/mfa/verify")
 async def mfa_verify(
     request: Request,
-    payload: MfaVerifyRequest,
+    payload: SchemaMfaVerifyRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Submit a code against a challenge. Consumes the challenge on success."""
@@ -1394,7 +1397,7 @@ async def mfa_verify(
 @router.post("/kill")
 async def kill_switch(
     request: Request,
-    payload: KillRequest,
+    payload: SchemaKillRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Halt every call (kill switch). Requires admin role."""
@@ -1600,7 +1603,7 @@ async def audit_verify(
 @router.post("/transfer/prepare")
 async def transfer_prepare(
     request: Request,
-    payload: TransferPrepareRequest,
+    payload: SchemaTransferPrepare,
     user: models.User = Depends(get_current_user),
 ):
     """Phase 1 of a transfer: price + reserve an intent (may need confirmation/MFA).
@@ -1723,7 +1726,7 @@ async def transfer_prepare(
 async def transfer_execute_approve(
     request: Request,
     intent_id: str,
-    payload: TransferExecuteApproveRequest,
+    payload: SchemaTransferExecuteApprove,
     user: models.User = Depends(get_current_user),
 ):
     """Human approves a held execute-transfer, then re-executes it."""
