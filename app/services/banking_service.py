@@ -163,9 +163,9 @@ async def process_banking_request(
         tool_normalized = tool.lower()
 
         if tool_normalized == "get-accounts":
-            SchemaCallRequest(tool=tool, args=args or {})
+            CallRequest(tool=tool, args=args or {})
         elif tool_normalized == "prepare-transfer":
-            SchemaTransferPrepare(
+            TransferPrepareRequest(
                 debtor_account_id=args.get("debtor_account_id", ""),
                 creditor=args.get("creditor", {}),
                 amount=args.get("amount", 0),
@@ -174,12 +174,12 @@ async def process_banking_request(
                 description=args.get("description"),
             )
         elif tool_normalized == "execute-transfer":
-            SchemaTransferExecute(intent_id=args.get("intent_id", ""))
+            TransferExecuteRequest(intent_id=args.get("intent_id", ""))
         elif tool_normalized == "execute-transfer-approve":
             TransferExecuteApproveRequest(approval_id=args.get("approval_id", ""))
         else:
             # Generic call - validate minimally
-            SchemaCallRequest(tool=tool, args=args or {})
+            CallRequest(tool=tool, args=args or {})
 
         # ===================================================================
         # Layer 2: Canonicalization

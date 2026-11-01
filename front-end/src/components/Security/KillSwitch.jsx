@@ -1,17 +1,22 @@
 import React, { useEffect, useState } from 'react';
 import { ShieldOff, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { killBanking, resumeBanking, getBankingStatus } from '../../services/api';
+import { useSignedBankingApi } from '../../hooks/useSignedBankingApi';
 
 export default function KillSwitch() {
   const [killed, setKilled] = useState(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
+  const { signedRequest } = useSignedBankingApi();
 
   const loadStatus = async (signal) => {
     try {
-      const res = await getBankingStatus({ signal });
-      setStatus(res.data.status || '');
-      setKilled(/kill/i.test(res.data.status || ''));
+      const res = await signedRequest(getBankingStatus, null, { signal, url: '/api/banking/status' });
+      const statusText = res.data.status || '';
+      setStatus(statusText);
+      // okgate prints `kill     off` / `kill     on`; match the value, not the word.
+      const killFlag = statusText.match(/^kill\s+(\S+)/im);
+      setKilled(killFlag ? !/^off$/i.test(killFlag[1]) : false);
     } catch (error) {
       if (error.name === 'CanceledError') return;
       setKilled(null);
@@ -27,7 +32,7 @@ export default function KillSwitch() {
   const handleKill = async () => {
     setLoading(true);
     try {
-      await killBanking({ reason: 'operator pressed the kill switch' });
+      await signedRequest(killBanking, { reason: 'operator pressed the kill switch' }, { method: 'POST', url: '/api/banking/kill' });
       setKilled(true);
       setStatus('kill switch engaged');
     } catch (error) {
@@ -40,7 +45,7 @@ export default function KillSwitch() {
   const handleResume = async () => {
     setLoading(true);
     try {
-      await resumeBanking();
+      await signedRequest(resumeBanking, null, { method: 'POST', url: '/api/banking/resume' });
       setKilled(false);
       setStatus('service resumed');
     } catch (error) {

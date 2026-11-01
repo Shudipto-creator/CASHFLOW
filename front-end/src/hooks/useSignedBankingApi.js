@@ -55,18 +55,18 @@ export function useSignedBankingApi() {
       const method = (config && config.method) || (data ? "POST" : "GET");
       const url = config.url || "/api/banking/call";
 
+      let stid;
+      let clientId;
       const attempt = async () => {
-        const { headers, stid, clientId } = await buildSigningHeaders(
-          method,
-          url,
-          data
-        );
+        const signing = await buildSigningHeaders(method, url, data);
+        stid = signing.stid;
+        clientId = signing.clientId;
 
         const mergedConfig = {
           ...config,
           headers: {
             ...(config.headers || {}),
-            ...headers,
+            ...signing.headers,
           },
         };
 

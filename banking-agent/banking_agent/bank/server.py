@@ -22,17 +22,41 @@ Handler contract (from bank2ai.tools.register_tools):
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Optional
 
 from bank2ai import register_tools
 from fastmcp import FastMCP
 
+from ..config import BankUpstreamMode, get_bank_upstream_settings
 from .ledger import Ledger
+
+logger = logging.getLogger(__name__)
+
+
+def build_bank_backend():
+    """Return the object that answers the bank2ai tool calls.
+
+    okgate.yaml pins this upstream to `python -m banking_agent.bank.server`, and
+    okgate.yaml is a human-owned trust boundary we do not edit to change data
+    sources. So the swap happens here, below the gate, chosen from the
+    environment: the tool names, input schemas and response models the gate
+    classifies and audits are identical either way.
+    """
+    settings = get_bank_upstream_settings()
+    if settings.mode is BankUpstreamMode.POSTMAN_DEMO:
+        from .postman_adapter import PostmanBankBackend
+
+        # Announced on stderr, which okgate relays into the proxy log: an
+        # operator must be able to tell which bank answered a demo run.
+        logger.warning("bank upstream: %s", settings.describe())
+        return PostmanBankBackend()
+    return Ledger()
 
 
 def build_server(ledger: Ledger | None = None) -> FastMCP:
     """Build the MCP server around `ledger` (a fresh one by default)."""
-    bank = ledger or Ledger()
+    bank = ledger or build_bank_backend()
 
     async def get_accounts(
         *,
@@ -162,7 +186,11 @@ def build_server(ledger: Ledger | None = None) -> FastMCP:
             transfer_intent_id=transfer_intent_id, idempotency_key=idempotency_key
         )
 
-    app: FastMCP = FastMCP("banking-agent-mock-bank")
+    app: FastMCP = FastMCP(
+        "banking-agent-postman-bank"
+        if get_bank_upstream_settings().mode is BankUpstreamMode.POSTMAN_DEMO
+        else "banking-agent-mock-bank"
+    )
     register_tools(
         app,
         get_accounts=get_accounts,

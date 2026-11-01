@@ -177,6 +177,9 @@ class TransferPrepareRequest(BaseModel):
     currency: str = Field("CNY", min_length=3, max_length=3, description="ISO 4217 3-letter currency code")
     rail: str = Field("swift", description="Payment rail: swift, ach, etc.")
     description: Optional[str] = Field(None, max_length=500)
+    confirmed: bool = False
+    mfa_challenge_id: Optional[str] = None
+    mfa_code: Optional[str] = None
 
 
 class TransferExecuteRequest(BaseModel):

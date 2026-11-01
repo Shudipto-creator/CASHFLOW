@@ -94,8 +94,8 @@ export async function getClientId() {
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
   });
-  if (record && record.id) {
-    _clientId = record.id;
+  if (record && record.value) {
+    _clientId = record.value;
     return _clientId;
   }
   _clientId = "client_" + crypto.randomUUID().replace(/-/g, "").slice(0, 16);

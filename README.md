@@ -30,6 +30,7 @@
 - [Banking Security Layer Setup](#banking-security-layer-setup)
 - [API Reference](#api-reference)
 - [Zero-Trust Banking API](#zero-trust-banking-api)
+- [Sandbox Testing](#sandbox-testing)
 - [Environment Variables](#environment-variables)
 - [Limitations](#limitations)
 - [License](#license)
@@ -109,6 +110,7 @@ CASHFLOW/
 │   └── dependencies.py           # Auth & DB dependencies
 ├── banking-agent/                # Zero-Trust security layer (standalone package)
 │   ├── banking_agent/
+│   │   ├── config.py         # BANK_UPSTREAM_MODE: MOCK | POSTMAN_DEMO
 │   │   ├── gate/
 │   │   │   ├── gate.py           # SecureBankGate — tier/MFA/confirmation enforcement
 │   │   │   ├── client.py         # GateClient — okgate proxy via npx
@@ -117,20 +119,25 @@ CASHFLOW/
 │   │   │   ├── daily_spend.py    # DailySpendLedger — cumulative daily total
 │   │   │   └── tiers.py          # Green/Yellow/Red classification
 │   │   ├── bank/
-│   │   │   ├── server.py         # Mock bank + bank2ai MCP tools
-│   │   │   ├── ledger.py         # In-memory ledger
+│   │   │   ├── server.py         # bank2ai MCP tools (backend chosen by mode)
+│   │   │   ├── ledger.py         # In-memory ledger (MOCK backend)
+│   │   │   ├── postman_adapter.py# Postman demo REST backend (POSTMAN_DEMO)
 │   │   │   └── data.py           # Mock data
+│   │   ├── config.py             # Bank upstream mode + demo connection settings
 │   │   ├── demo/
 │   │   │   └── run.py            # 8 scenario / 38-check demo
 │   │   └── __init__.py
 │   ├── okgate.yaml               # okgate policy — kill, caps, classification, approvals
+│   ├── bank_upstream.env         # Operator switch: which bank answers behind the gate
 │   ├── requirements.txt
 │   ├── pytest.ini
 │   └── tests/
 │       ├── test_gate.py          # Unit tests
 │       ├── test_tiers.py
 │       ├── test_mfa.py
-│       └── test_daily_spend.py
+│       ├── test_daily_spend.py
+│       ├── test_postman_adapter.py    # Adapter against the demo's verified contract
+│       └── test_sandbox_integration.py# Mode switching + AgentVault detection
 ├── front-end/                    # React + Vite frontend
 │   ├── src/
 │   │   ├── pages/                # Dashboard, Analysis, Documents, Report, Banking, Security
@@ -147,6 +154,8 @@ CASHFLOW/
 ├── data/                         # Vector store & document data
 ├── uploads/                      # Document uploads
 ├── logs/                         # Application logs
+├── scripts/
+│   └── run_in_agentvault.sh      # Wrap the backend in AgentVault (credential isolation)
 ├── banking_agent/                # WeCom bot package (imported by app.main)
 ├── .gitignore                    # Git ignore rules
 ├── README.md                     # This file
@@ -340,7 +349,7 @@ source .venv/bin/activate && pip install -r requirements.txt  # macOS / Linux
 
 ```bash
 cd banking-agent
-.venv\Scripts\python.exe -m pytest -q        # 41/41 pass (Windows)
+.venv\Scripts\python.exe -m pytest -q        # 78 passed, 1 skipped (Windows)
 source .venv/bin/activate && python -m pytest -q  # macOS / Linux
 ```
 
@@ -362,6 +371,156 @@ Set `KEY_PASSPHRASE` in `app/.env` for Ed25519 signing key decryption at startup
 ```bash
 KEY_PASSPHRASE=your-passphrase python app/scripts/generate_keys.py
 ```
+
+---
+
+## Sandbox Testing
+
+Two external sandboxes validate the Zero-Trust layer from opposite directions: the **Postman Banking-API-Demo** proves the tool surface works against a real, stateful REST bank (functional), and **AgentVault** proves the backend process can be denied credentials it is not allowed to hold (isolation).
+
+```
+frontend / agent
+   └── okgate proxy          ← tiers, ¥5,000/day cap, loop breaker, kill, audit
+         └── SecureBankGate  ← MFA, confirmation, daily spend ledger
+               └── bank2ai tools        ← names never change (the invariant)
+                     ├── Ledger            (MOCK)
+                     └── PostmanBankBackend (POSTMAN_DEMO)   ← sandbox sits here
+```
+
+Both sandboxes plug in **below** the security layer. `SecureBankGate` and `okgate.yaml` are untouched, so a security result measured in either sandbox means exactly what it means in production.
+
+### 1 — Postman Banking-API-Demo (functional)
+
+Proves the `bank2ai` handlers can drive a live HTTP bank instead of the in-memory ledger.
+
+```bash
+git clone https://github.com/Postman-Devrel/Banking-API-Demo postman-demo
+cd postman-demo
+npm install            # requires Node 20+
+npm run dev            # all three services (banking :3000, fraud :8080, support :8090)
+npm run dev:api        # just the banking API on :3000 — enough for CASHFLOW
+```
+
+Point CASHFLOW's bank upstream at it — no code change, no `okgate.yaml` change.
+Exporting the variable is **not** enough once the gate is in front: okgate spawns the
+bank with the MCP SDK's default environment plus only the keys declared in
+`okgate.yaml`'s `upstreams[].env`, so a shell variable never reaches it. The switch is
+the operator-owned `banking-agent/bank_upstream.env` (same trust story as `okgate.yaml`
+— a human edits it, the agent does not):
+
+```bash
+# banking-agent/bank_upstream.env
+BANK_UPSTREAM_MODE=postman_demo
+POSTMAN_DEMO_BASE_URL=http://127.0.0.1:3000
+POSTMAN_DEMO_ALLOW_CURRENCY_ALIAS=1   # the demo script speaks CNY; see the currency note
+
+cd banking-agent
+python -m banking_agent.demo.run      # same 38 checks, now over REST
+```
+
+The proxy echoes the choice on stderr for every run, which is how you confirm it took
+effect rather than silently falling back to the mock:
+
+```
+[okgate] bank: bank upstream: POSTMAN_DEMO -> http://127.0.0.1:3000 (prefix /api/v1)
+[okgate] connected 1/1 upstreams, 9 tools, mode enforce
+```
+
+Each key can be set in the process environment or in `banking-agent/bank_upstream.env`;
+the environment wins, which is what makes a one-off standalone run
+(`BANK_UPSTREAM_MODE=postman_demo python -m banking_agent.bank.server`) work without
+touching the file. Defaults below are what the code uses when neither is set.
+
+| Setting | Default | Notes |
+|---------|---------|-------|
+| `BANK_UPSTREAM_MODE` | `mock` | `mock` \| `postman_demo`. An unrecognised value fails closed to `mock` — a typo must not reach a live bank. |
+| `POSTMAN_DEMO_BASE_URL` | `http://localhost:3000` | Banking service of the demo. Use `127.0.0.1` on Windows: the demo listens on IPv4 and a `::1`-first lookup surfaces as "not running". |
+| `POSTMAN_DEMO_API_PREFIX` | `/api/v1` | The demo mounts its routers under `/api/v1`; the bare `/accounts` paths 404. |
+| `POSTMAN_DEMO_API_KEY` | `1234` | Demo customer key; admin is `admin-demo-key`. Sent as `x-api-key`. |
+| `POSTMAN_DEMO_TRANSFER_PATH` | `/api/v1/transactions` | The demo has **no transfers route** — a money movement is `POST /api/v1/transactions` ("post an atomic transfer or deposit"). Override here if your fork renames it. |
+| `POSTMAN_DEMO_TRANSACTIONS_PATH` | `/api/v1/transactions` | Read side. |
+| `POSTMAN_DEMO_CURRENCY` | `COSMIC_COINS` | The amount the adapter posts. Must be one of the demo's enum: `COSMIC_COINS` / `GALAXY_GOLD` / `MOON_BUCKS`. |
+| `POSTMAN_DEMO_ALLOW_CURRENCY_ALIAS` | `0` | Off by default. When `1`, the caller's currency label is treated as decorative and the transfer settles in the account's own token — a functional demo of the flow, **not** a monetary-accurate one. `banking_agent/demo/run.py` is written in CNY, so it needs this on to complete against the demo. See below. |
+| `POSTMAN_DEMO_RUN_ID` | *(unset)* | Sent as `x-demo-run-id` so a judge can tie calls to one recorded session. |
+| `POSTMAN_DEMO_TIMEOUT_S` | `10` | |
+
+**Reading the demo's contract honestly.** Everything above comes from `apps/banking-api/openapi/openapi.yaml` and `src/server.js` in that repo, and three of its rules shaped the adapter:
+
+- Amounts are **non-negative integers in minor units**. `to_minor_units()` converts at the boundary, so the agent, `prepare-transfer`'s `amount` argument and the ¥1,000 / ¥5,000 tiers all keep working in major units while the wire stays integer.
+- Requests use `additionalProperties: false`, and the recipient field is `toAccountId`, which must name an account that already exists. `prepare-transfer` therefore resolves the creditor to a real `accountId` *before* the gate asks for approval; an unspendable intent never reaches `execute-transfer` (`unknown_recipient`).
+- The currency enum contains no CNY, and bank2ai validates `^[A-Z]{3}$`. So `COSMIC_COINS` is denominated on the wire and shown to the agent as `COS`. A CNY transfer against a token balance would silently reinterpret every threshold in `okgate.yaml`, so the default is to refuse with `currency_mismatch` and name the flag that would override it.
+
+**Why the adapter defers `httpx`.** okgate gives an upstream 15s (`connectTimeoutMs`, hard-coded in `@agentwares/agentguard`) to finish the MCP handshake; if it misses, every later call in the run answers `no upstream exposes a tool named "…"`. Importing `httpx` costs ~4s cold and `httpx.AsyncClient()` another ~7s because it builds a TLS context from the OS certificate store — enough to take an otherwise-passing mock run to 12s and blow the budget. `tools/list` needs no HTTP client, so the import lives in `_httpx()` and the client is built on the first request. If you add another bank adapter behind this gate, keep its heavy imports off the startup path for the same reason.
+
+Verify:
+
+```bash
+cd banking-agent
+python -m pytest tests/test_postman_adapter.py -q          # 19 passed, 1 skipped
+POSTMAN_DEMO_LIVE=1 python -m pytest tests/test_postman_adapter.py -k live -q   # against the running demo
+python -m pytest tests/test_sandbox_integration.py -q      # 18 passed — mode switching + detection
+python -m pytest -q                                        # 78 passed, 1 skipped
+```
+
+The default tests drive an in-process `httpx.MockTransport` that replays the verified contract above — including `additionalProperties: false`, the integer-minor-unit check and the currency enum — so CI fails if a payload shape drifts, without needing Node. The `POSTMAN_DEMO_LIVE`-gated test is the one that talks to the real service.
+
+**Why the two-phase split is kept.** The demo settles money in one call, and `PostmanBankClient.execute_transfer(amount, to_account)` exists for direct functional testing. The MCP tool surface deliberately does **not** expose it: okgate prices money from `prepare-transfer`'s `amount` argument (`spend.tools.prepare-transfer.amount_arg: amount`) and treats `execute-transfer` as "irreversible, but not priceable". A single-call money tool would commit before the gate ever saw a price, and the ¥1,000 / ¥5,000 thresholds would stop counting real outflows. `tests/test_postman_adapter.py::test_prepare_prices_without_moving_money` guards that ordering.
+
+### 2 — AgentVault (credential isolation)
+
+```bash
+npm install -g @inflectiv-ai/agentvault    # run the install yourself: global npm installs are machine-wide
+agentvault init                            # creates .agentvault/ + built-in profiles
+scripts/run_in_agentvault.sh               # wraps uvicorn with -p restrictive
+# or the raw command:
+agentvault wrap -p restrictive "python -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+```
+
+Then, from another terminal:
+
+```bash
+curl http://localhost:8000/health
+# {"status":"ok","sandbox":"agentvault","sandbox_profile":"restrictive",
+#  "sandbox_markers":["AGENTVAULT_SESSION","AGENTVAULT_PROFILE","AGENTVAULT_TRUST"], ...}
+```
+
+`/health` is a lean probe that reports the wrapper; `/api/health` still does the AWS/Ollama checks. The startup log emits `Running outside AgentVault sandbox. Security isolation is not active.` whenever the markers are absent, and every response carries `X-Sandbox`.
+
+**What this proves — and what it does not.** Read `@inflectiv-ai/agentvault@1.0.1`'s `dist/sandbox/runSandboxed.js` and you find the "sandbox" is:
+
+```js
+spawn(parts[0], parts.slice(1), { env, stdio: 'inherit', shell: true })
+```
+
+`-p restrictive` rebuilds the environment from scratch, letting through only `PATH/HOME/USER/SHELL/TERM/LANG/LC_ALL/TMPDIR/NODE_PATH` plus profile-allowed vault secrets, and injects `AGENTVAULT_SESSION/PROFILE/TRUST`. There is no namespace, firewall, proxy or `sandbox-exec`/`firejail` anywhere in the package, and its own README describes it as an encrypted credential vault.
+
+- ✅ **Credential isolation — proven.** The wrapped process cannot read env secrets the profile denies.
+- ❌ **Network isolation — not provided by this tool.** `curl` reaching the wrapped backend is the *expected* result, not a failed test; nothing in AgentVault blocks ingress or egress. Note also that `app/.env` is loaded from disk by python-dotenv inside the process, so parent-env filtering alone does not hide those values — use `MIRROR_DOTENV_TO_VAULT=1` in the script to move them into the vault and let the profile deny them explicitly.
+- **The network control plane remains okgate**: the agent never holds a handle on the bank upstream, and `classify.unknown: block` refuses any tool nobody classified. That is the bypass claim to demonstrate.
+
+Honest bypass demo for the judges (works with or without AgentVault):
+
+```bash
+# 1. an unclassified money tool is refused outright (fail closed)
+# 2. the kill switch stops everything, including reads
+echo kill > banking-agent/.okgate/KILL
+# 3. the ¥5,000/day cap rejects the sixth ¥1,000 transfer of the day
+```
+
+### Backend-agnostic by construction
+
+Whichever backend answers, `build_server()` registers the identical nine tools — `get-accounts`, `get-transactions`, `get-transaction`, `get-categories`, `get-transactions-summary`, `get-recipients`, `create-recipient`, `prepare-transfer`, `execute-transfer` — with the same bank2ai input schemas and response models (`tests/test_sandbox_integration.py` asserts the sets are equal in both modes). okgate's `classify` rules key off those names, and the frontend's Ed25519-signed `/api/banking/*` calls never learn which bank answered. Adding a real bank means writing a third backend with the same handler signatures — exactly what these two sandboxes demonstrate.
+
+| Failure mode | Behaviour |
+|--------------|-----------|
+| Demo not running | `ToolResult(status="error", message="Postman Demo API is not running. Please start it with \`npm run dev\`.")`; on the MCP surface a `BankUnavailableError` is raised so the gate records a refusal. |
+| Demo hangs | Timeout reported distinctly from downtime, so operators are not told to restart a healthy service. |
+| Wrong `x-api-key` | Reported as `401`, never as "service down". |
+| Payload the demo rejects | `400` with the demo's own message surfaced in `detail`. The adapter posts the shapes its schema declares — integer minor units, only known keys, an enum currency — so a regression here shows up as a refusal, not a silently coerced amount. |
+| Currency the demo does not offer | `prepare-transfer` returns `currency_mismatch` and names `POSTMAN_DEMO_ALLOW_CURRENCY_ALIAS`; it never re-denominates a ¥ instruction into a token behind the gate's back. |
+| Recipient with no demo account | `prepare-transfer` returns `unknown_recipient`, so approval is never requested for a transfer that cannot be posted. |
+| Reads against a dead bank | Raises instead of returning an empty list — an unreachable bank must not look like a broke customer. |
+| Outside AgentVault | Startup warning + `X-Sandbox: none` + `/health` reports `sandbox: "none"`. |
 
 ---
 
@@ -403,6 +562,17 @@ BACKEND_SIGNING_KEY_ID=banking-backend-v1
 BANK_CLIENT_CERT_PATH=app/secrets/bank-client-cert.pem
 BANK_CLIENT_KEY_PATH=app/secrets/bank-client-key.pem
 BANK_CA_CERT_PATH=app/secrets/bank-ca-cert.pem
+
+# Sandbox testing (see "Sandbox Testing")
+BANK_UPSTREAM_MODE=mock            # mock | postman_demo
+POSTMAN_DEMO_BASE_URL=http://localhost:3000
+POSTMAN_DEMO_API_PREFIX=/api/v1
+POSTMAN_DEMO_API_KEY=1234
+POSTMAN_DEMO_TRANSFER_PATH=/api/v1/transactions   # the demo has no /transfers route
+POSTMAN_DEMO_CURRENCY=COSMIC_COINS                # COSMIC_COINS | GALAXY_GOLD | MOON_BUCKS
+POSTMAN_DEMO_ALLOW_CURRENCY_ALIAS=0               # 1 = settle in the account's own token
+POSTMAN_DEMO_RUN_ID=                              # sent as x-demo-run-id
+POSTMAN_DEMO_TIMEOUT_S=10
 ```
 
 ---

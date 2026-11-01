@@ -9,7 +9,6 @@ import {
   approveBankingTransfer,
   startMfaChallenge,
   getMfaCode,
-  verifyMfaCode,
   killBanking,
   resumeBanking,
   getBankingStatus,
@@ -96,7 +95,7 @@ export default function Banking() {
     [signedRequest]
   );
   const signedResume = useCallback(
-    (config) => signedRequest(resumeBanking, null, { ...config, url: '/api/banking/resume' }),
+    (config) => signedRequest(resumeBanking, null, { ...config, method: 'POST', url: '/api/banking/resume' }),
     [signedRequest]
   );
 
@@ -230,14 +229,9 @@ export default function Banking() {
     setSubmitLoading(true);
     setError(null);
     try {
-      const res = await signedRequest(verifyMfaCode, { challenge_id: mfaChallengeId, code: mfaCode }, { url: '/api/banking/mfa/verify' });
-      if (!res.data.valid) {
-        setError('Invalid code');
-        setSubmitLoading(false);
-        return;
-      }
+      // The gate verifies the code itself when it is submitted with the
+      // transfer, so the challenge must not be consumed by a separate call.
       setMfaVerified(true);
-      // Re-prepare with the verified code.
       const amt = Number(amount);
       const prepRes = await signedPrepareTransfer({
         debtor_account_id: DEBTOR_ACCOUNT,

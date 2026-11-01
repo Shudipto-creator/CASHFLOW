@@ -54,6 +54,11 @@ def _child_env() -> dict[str, str]:
     policy file portable across machines. The upstream still has to be the
     interpreter that has bank2ai installed, so that interpreter's own directory
     goes first on the child's PATH.
+
+    Nothing else is forwarded, and that is deliberate — okgate spawns the bank
+    with the MCP SDK's default environment plus only the keys declared in
+    okgate.yaml, so the proxy's own env cannot select the bank implementation
+    either way. See ``banking_agent.config.UPSTREAM_ENV_FILE`` for the switch.
     """
     scripts = os.path.dirname(os.path.abspath(sys.executable))
     existing = os.environ.get("PATH", "")
