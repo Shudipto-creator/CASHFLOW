@@ -159,3 +159,37 @@ class ErrorDetail(BaseModel):
 class ErrorResponse(BaseModel):
     error: Dict[str, Any]
     timestamp: datetime
+
+
+# Zero-Trust banking transfer schemas (defense-in-depth Layer 1)
+class CreditorAccount(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    accountIdentifier: dict = Field(
+        ...,
+        description="Bank account identifier: {type, accountNumber, country}",
+    )
+
+
+class TransferPrepareRequest(BaseModel):
+    debtor_account_id: str = Field(..., min_length=5, max_length=50)
+    creditor: CreditorAccount
+    amount: float = Field(..., gt=0, description="Must be a positive number")
+    currency: str = Field("CNY", min_length=3, max_length=3, description="ISO 4217 3-letter currency code")
+    rail: str = Field("swift", description="Payment rail: swift, ach, etc.")
+    description: Optional[str] = Field(None, max_length=500)
+
+
+class TransferExecuteRequest(BaseModel):
+    intent_id: str = Field(..., min_length=1, max_length=100)
+
+
+class TransferExecuteApproveRequest(BaseModel):
+    approval_id: str = Field(..., min_length=1, max_length=100)
+
+
+class CallRequest(BaseModel):
+    tool: str = Field(..., min_length=1, max_length=100)
+    args: dict = Field(default_factory=dict)
+    confirmed: bool = False
+    mfa_challenge_id: Optional[str] = None
+    mfa_code: Optional[str] = None

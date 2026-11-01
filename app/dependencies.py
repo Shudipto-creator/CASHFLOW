@@ -7,6 +7,7 @@ from app.database import get_db
 from app.utils.auth import decode_access_token
 from app import models
 from typing import Optional
+from typing import Literal, Optional
 
 security = HTTPBearer()
 
@@ -14,8 +15,7 @@ security = HTTPBearer()
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)
 ) -> models.User:
-    """
-    Dependency to get current authenticated user
+    """Dependency to get current authenticated user
 
     Args:
         credentials: JWT token from Authorization header
@@ -62,11 +62,26 @@ async def get_current_user(
     return user
 
 
-def get_optional_current_user(
+async def get_current_admin_user(
+    current_user: models.User = Depends(get_current_user),
+) -> models.User:
+    """Dependency that requires admin role.
+
+    Raises:
+        HTTPException: If user does not have admin role.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can perform this action",
+        )
+    return current_user
+
+
+async def get_optional_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), db: Session = Depends(get_db)
 ) -> Optional[models.User]:
-    """
-    Optional authentication - returns None if no valid token
+    """Optional authentication - returns None if no valid token
 
     Args:
         credentials: JWT token from Authorization header (optional)

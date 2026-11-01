@@ -26,6 +26,7 @@ const NAV_ITEMS = [
   { to: "/billing", label: "Billing", icon: CreditCard },
   { to: "/banking", label: "Banking", icon: Send },
   { to: "/security", label: "Security", icon: Shield },
+  { to: "/fx-convert", label: "FX Convert", icon: Send },
 ];
 
 const FALLBACK_MODES = [

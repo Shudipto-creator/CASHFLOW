@@ -10,6 +10,9 @@ const BASE_NAV_ITEMS = [
   { to: "/analysis", label: "Analysis" },
   { to: "/chat", label: "AI CFO" },
   { to: "/reports", label: "Reports" },
+  { to: "/billing", label: "Billing" },
+  { to: "/banking", label: "Banking" },
+  { to: "/security", label: "Security" },
 ];
 
 const FALLBACK_MODES = [
@@ -31,9 +34,7 @@ export default function ThemeLayout() {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const navItems = isAuthenticated
-    ? [...BASE_NAV_ITEMS, { to: "/billing", label: "Billing" }]
-    : BASE_NAV_ITEMS;
+  const navItems = BASE_NAV_ITEMS;
 
   const handleLogout = () => {
     logout();

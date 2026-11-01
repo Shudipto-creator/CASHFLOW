@@ -20,6 +20,7 @@ import Reports from './pages/Reports';
 import Billing from './pages/Billing';
 import Banking from './pages/Banking';
 import Security from './pages/Security';
+import FXConvert from './pages/FXConvert';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 
@@ -56,6 +57,7 @@ export default function App() {
               <Route path="/billing" element={<Billing />} />
               <Route path="/banking" element={<Banking />} />
               <Route path="/security" element={<Security />} />
+              <Route path="/fx-convert" element={<FXConvert />} />
             </Route>
           </Routes>
         </BrowserRouter>

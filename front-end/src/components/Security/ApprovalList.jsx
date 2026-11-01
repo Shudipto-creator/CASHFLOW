@@ -1,16 +1,33 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { List, CheckCircle2, AlertCircle } from 'lucide-react';
-import { getBankingApprovals, approveBankingTransfer, executeBankingTransfer } from '../../services/api';
+import { getBankingApprovals, approveBankingTransfer } from '../../services/api';
+import { useSignedBankingApi } from '../../hooks/useSignedBankingApi';
 
 export default function ApprovalList({ onApprovalSettled }) {
   const [approvals, setApprovals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [approving, setApproving] = useState(new Set());
 
+  const { signedRequest } = useSignedBankingApi();
+
+  const signedGetApprovals = useCallback(
+    (config) => signedRequest(getBankingApprovals, null, { ...config, url: '/api/banking/approvals' }),
+    [signedRequest]
+  );
+  const signedApproveTransfer = useCallback(
+    (approvalId, data, config) =>
+      signedRequest(approveBankingTransfer, data, {
+        ...config,
+        url: `/api/banking/transfer/execute/${encodeURIComponent(approvalId)}/approve`,
+        intentId: approvalId,
+      }),
+    [signedRequest]
+  );
+
   const load = async (signal) => {
     setLoading(true);
     try {
-      const res = await getBankingApprovals({ signal });
+      const res = await signedGetApprovals({ signal });
       const text = res.data.approvals || '';
       setApprovals(parseApprovals(text));
     } catch (error) {
@@ -27,7 +44,6 @@ export default function ApprovalList({ onApprovalSettled }) {
     return () => controller.abort();
   }, []);
 
-  // okgate `approvals` CLI output is free-form text; parse approval ids.
   function parseApprovals(text) {
     const ids = [...text.matchAll(/apr_[0-9a-fA-F]+/g)].map((m) => m[0]);
     return ids.map((id) => ({ id }));
@@ -36,7 +52,7 @@ export default function ApprovalList({ onApprovalSettled }) {
   const handleApprove = async (approvalId) => {
     setApproving((prev) => new Set([...prev, approvalId]));
     try {
-      await approveBankingTransfer(approvalId, { approval_id: approvalId });
+      await signedApproveTransfer(approvalId, { approval_id: approvalId });
       if (onApprovalSettled) onApprovalSettled(approvalId);
       await load();
     } catch (error) {

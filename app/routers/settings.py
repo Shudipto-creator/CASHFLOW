@@ -1,11 +1,13 @@
 """App settings endpoints (processing mode switch)."""
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi import Request
 from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 from app.services.mode_service import get_processing_mode, set_processing_mode
 from app.services.llm_factory import get_mode_status
+from app.integrations.telegram_bot import get_telegram_bot, is_telegram_available
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -50,4 +52,29 @@ async def update_mode(payload: ModeUpdateRequest):
         modes=status_data["modes"],
         aws=status_data["aws"],
         local=status_data["local"],
+    )
+
+
+@router.post("/telegram/webhook")
+async def telegram_webhook(request: Request):
+    """Webhook endpoint for Telegram bot updates.
+
+    Receives updates from Telegram and processes them through the
+    Telegram bot integration.
+    """
+    if not is_telegram_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Telegram bot not configured. Set TELEGRAM_BOT_TOKEN "
+                   "and install python-telegram-bot.",
+        )
+
+    body = await request.json()
+    bot = get_telegram_bot()
+    if bot:
+        await bot.process_webhook(body)
+        return {"status": "ok"}
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Telegram bot not initialized",
     )

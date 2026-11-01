@@ -1,1 +1,1 @@
-"""Utility modules for CFOne"""
+"""Utility modules for CASHFLOW"""

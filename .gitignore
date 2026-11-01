@@ -15,6 +15,8 @@ __pycache__/
 
 # Node.js / Frontend
 node_modules/
+/frontend/
+/frontend-V2/
 frontend/node_modules/
 npm-debug.log*
 yarn-debug.log*
@@ -223,3 +225,9 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 topic.md
+
+
+# Zero-Trust banking secrets: encrypted signing keys + mTLS certs.
+# NEVER commit these — the passphrase is injected via environment variables.
+app/secrets/
+banking-agent/secrets/
