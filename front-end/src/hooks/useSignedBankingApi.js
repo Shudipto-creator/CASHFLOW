@@ -63,6 +63,7 @@ export function useSignedBankingApi() {
         clientId = signing.clientId;
 
         const mergedConfig = {
+          timeout: 15000,
           ...config,
           headers: {
             ...(config.headers || {}),

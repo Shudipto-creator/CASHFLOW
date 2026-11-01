@@ -22,7 +22,6 @@ import MfaChallenge from '../components/Security/MfaChallenge';
 import { useSignedBankingApi } from '../hooks/useSignedBankingApi';
 import { Send, Wallet, CreditCard, AlertCircle, CheckCircle2, ShieldAlert } from 'lucide-react';
 
-const DEBTOR_ACCOUNT = 'acc_cmb_001';
 const DEFAULT_CREDITOR = {
   name: '李娜',
   accountIdentifier: {
@@ -32,14 +31,24 @@ const DEFAULT_CREDITOR = {
   },
 };
 
-function formatMoney(value) {
-  return `¥${Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+const CURRENCY_NAMES = {
+  COSMIC_COINS: 'Cosmic Coins',
+  GALAXY_GOLD: 'Galaxy Gold',
+  MOON_BUCKS: 'Moon Bucks',
+  CNY: 'Chinese yuan',
+};
+
+function formatMoney(value, currency = 'CNY') {
+  const code = currency || 'CNY';
+  const name = CURRENCY_NAMES[code] || code;
+  return `${Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${name} (${code})`;
 }
 
 export default function Banking() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [accounts, setAccounts] = useState([]);
+  const [selectedAccountId, setSelectedAccountId] = useState('');
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -107,11 +116,19 @@ export default function Banking() {
           signedBankingCall({ tool: 'get-accounts', args: {} }, { signal: controller.signal }),
           signedBankingCall({ tool: 'get-transactions', args: { count: 10 } }, { signal: controller.signal }),
         ]);
-        setAccounts(((accRes.data.value || {}).items || []));
+        const loadedAccounts = ((accRes.data.value || {}).items || []);
+        setAccounts(loadedAccounts);
+        if (loadedAccounts.length > 0) {
+          setSelectedAccountId(String(loadedAccounts[0].id || loadedAccounts[0].account_id || ''));
+        }
         setTransactions(((txRes.data.value || {}).items || []));
       } catch (error) {
         if (error.name === 'CanceledError') return;
-        setError(error.response?.data?.detail || 'Failed to load accounts');
+        setError(
+          error.code === 'ECONNABORTED'
+            ? 'Banking services timed out. Check the backend and retry.'
+            : error.response?.data?.detail || 'Failed to load accounts',
+        );
       } finally {
         setLoading(false);
       }
@@ -138,7 +155,7 @@ export default function Banking() {
     }
     try {
       const res = await signedPrepareTransfer({
-        debtor_account_id: DEBTOR_ACCOUNT,
+        debtor_account_id: selectedAccountId,
         creditor: {
           name: creditorName,
           accountIdentifier: { type: 'accountNumber', accountNumber: creditorAccount, country: creditorCountry },
@@ -185,7 +202,7 @@ export default function Banking() {
     const amt = Number(amount);
     try {
       const res = await signedPrepareTransfer({
-        debtor_account_id: DEBTOR_ACCOUNT,
+        debtor_account_id: selectedAccountId,
         creditor: {
           name: creditorName,
           accountIdentifier: { type: 'accountNumber', accountNumber: creditorAccount, country: creditorCountry },
@@ -234,7 +251,7 @@ export default function Banking() {
       setMfaVerified(true);
       const amt = Number(amount);
       const prepRes = await signedPrepareTransfer({
-        debtor_account_id: DEBTOR_ACCOUNT,
+        debtor_account_id: selectedAccountId,
         creditor: {
           name: creditorName,
           accountIdentifier: { type: 'accountNumber', accountNumber: creditorAccount, country: creditorCountry },
@@ -335,7 +352,7 @@ export default function Banking() {
     }
   };
 
-  const canTransfer = stage === 'idle' || stage === 'error';
+  const canTransfer = (stage === 'idle' || stage === 'error') && Boolean(selectedAccountId);
   const tierColor = stage === 'awaiting-mfa' ? 'red' : stage === 'awaiting-confirmation' ? 'yellow' : 'green';
 
   if (loading) {
@@ -377,6 +394,25 @@ export default function Banking() {
           <div className="surface-card p-5 mb-6">
             <h2 className="mb-4 text-xs uppercase tracking-[0.2em] text-[var(--text-muted)]">New transfer</h2>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="col-span-full sm:col-span-2">
+                <label className="block mb-1.5 text-[10px] uppercase tracking-[0.15em] text-[var(--text-muted)]">Source account</label>
+                <select
+                  value={selectedAccountId}
+                  onChange={(e) => setSelectedAccountId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-md border border-[var(--border-color)] bg-[var(--surface-card)] text-[var(--text-primary)] focus:border-[var(--primary-accent)] focus:outline-none text-xs"
+                  disabled={accounts.length === 0}
+                >
+                  {accounts.length === 0 && <option value="">No accounts available</option>}
+                  {accounts.map((account) => {
+                    const id = String(account.id || account.account_id || '');
+                    return (
+                      <option key={id} value={id}>
+                        {account.name || account.owner || id} · {id}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
               <div className="col-span-full sm:col-span-2">
                 <label className="block mb-1.5 text-[10px] uppercase tracking-[0.15em] text-[var(--text-muted)]">Creditor name</label>
                 <input
@@ -536,33 +572,6 @@ export default function Banking() {
         </div>
 
         <div className="lg:col-span-1 flex flex-col gap-6">
-          <div className="surface-card p-5 shrink-0">
-            <h2 className="mb-3 text-xs uppercase tracking-[0.2em] text-[var(--text-muted)]">Accounts</h2>
-            <ul>
-              {accounts.map((acc) => (
-                <li key={acc.account_id || acc.id || acc.name} className="flex items-center justify-between gap-3 py-2 border-b border-[var(--border-color)]/50 last:border-0 text-xs">
-                  <span className="font-mono text-[var(--text-secondary)] truncate">{acc.name || acc.account_id || 'Account'}</span>
-                  <span className="font-mono text-[var(--text-primary)]">{acc.available_balance ? formatMoney(acc.available_balance) : '—'}</span>
-                </li>
-              ))}
-              {accounts.length === 0 && <p className="text-[10px] text-[var(--text-muted)]">No accounts</p>}
-            </ul>
-          </div>
-          <div className="surface-card p-5 shrink-0">
-            <h2 className="mb-3 text-xs uppercase tracking-[0.2em] text-[var(--text-muted)]">Recent transactions</h2>
-            <ul>
-              {transactions.slice(0, 5).map((tx) => (
-                <li key={tx.transaction_id || tx.id} className="py-2 border-b border-[var(--border-color)]/50 last:border-0 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-[var(--text-secondary)]">{tx.description || tx.name || 'Transaction'}</span>
-                    <span className="font-mono text-[var(--text-primary)]">{tx.amount ? formatMoney(tx.amount) : '—'}</span>
-                  </div>
-                  <span className="block text-[9px] text-[var(--text-muted)]">{tx.date || tx.posted_date || ''}</span>
-                </li>
-              ))}
-              {transactions.length === 0 && <p className="text-[10px] text-[var(--text-muted)]">No transactions</p>}
-            </ul>
-          </div>
         </div>
       </div>
     </div>
