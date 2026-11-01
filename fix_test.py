@@ -9,9 +9,40 @@ import secrets
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-BASE = 'http://127.0.0.1:8000'
+# Change to project directory
+import os
+os.chdir(r"D:\Downloads\CASHFLOW-emmanuel(1)\CASHFLOW-emmanuel")
+
+# Set environment variable
+os.environ["KILO_API_KEY"] = "ec2e4f8be08f964fa2550693"
+
+# Start backend server
+print("Starting backend server...")
+proc = subprocess.Popen([
+    "banking-agent\\.venv\\Scripts\\python.exe",
+    "-m", "uvicorn", "app.main:app",
+    "--host", "127.0.0.1",
+    "--port", "8000"
+], env={**os.environ, "KEY_PASSPHRASE": "cashflow-dev-passphrase-2026"}, cwd=r"D:\Downloads\CASHFLOW-emmanuel(1)\CASHFLOW-emmanuel")
+
+# Wait for server to start
+print("Waiting for backend to start...")
+for i in range(30):
+    try:
+        r = requests.get(BASE + "/api/banking/tools", timeout=2)
+        if r.status_code in (200, 401):
+            print(f"Backend ready! Status: {r.status_code}")
+            break
+    except Exception:
+        pass
+    time.sleep(1)
+else:
+    print("Backend failed to start!")
+    proc.terminate()
+    sys.exit(1)
 
 # Register and login
+print("\n--- Registering and logging in ===")
 email = f'test_{int(time.time())}@example.com'
 password = 'Password123'
 
@@ -31,7 +62,7 @@ private_key = Ed25519PrivateKey.generate()
 public_key = private_key.public_key()
 public_pem = public_key.public_bytes(encoding=Encoding.PEM, format=PublicFormat.SubjectPublicKeyInfo)
 pub_b64 = base64.b64encode(public_pem).decode('ascii')
-client_id = 'client_' + ''.join(secrets.choice('0123456789abcdef') for _ in range(16))
+client_id = f'client_{int(time.time())}'
 
 def canonicalize_deep(value):
     if value is None or not isinstance(value, (dict, list)):
@@ -64,15 +95,14 @@ def signed_request(method, path, body=None):
         'X-Client-Public-Key': pub_b64,
     })
     if method == 'GET':
-        return requests.get(BASE + url, headers=h, params=body if isinstance(body, dict) else None, timeout=30)
+        return requests.get(BASE + path, headers=h, params=body if isinstance(body, dict) else None, timeout=30)
     return requests.post(BASE + url, json=body, headers=h, timeout=30)
 
 print()
 print('=== FX Endpoint Tests ===')
 
-# Test FX rates
 r = signed_request('GET', '/api/banking/fx/rates?from_currency=CNY&to_currency=USD')
-print(f'FX rates CNY->USD: {r.status_code}', r.text[:200])
+print(f'FX rates CNY->USD: {r.status_code} - {r.text[:200]}')
 
 r = signed_request('POST', '/api/banking/fx/convert', {'from_currency': 'CNY', 'to_currency': 'USD', 'amount': 1000})
 print(f'FX Convert CNY->USD 1000:', r.status_code, r.text[:200])
@@ -81,7 +111,9 @@ r = signed_request('POST', '/api/banking/fx/convert', {'from_currency': 'USD', '
 print(f'FX Convert USD->CNY 100:', r.status_code, r.text[:200])
 
 r = signed_request('POST', '/api/banking/fx/convert', {'from_currency': 'CNY', 'to_currency': 'EUR', 'amount': 1000})
-print('FX Convert CNY->EUR 1000:', r.status_code, r.text[:200])
+print(f'FX Convert CNY->EUR 1000:', r.status_code, r.text[:200])
 
 print()
 print('=== All FX endpoint tests completed ===')
+
+proc.terminate()

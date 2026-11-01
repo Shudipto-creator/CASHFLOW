@@ -1,10 +1,16 @@
 """FastAPI main application for CASHFLOW"""
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import get_settings
 from app.database import init_db
 from app.middleware.cors import setup_cors
 from app.middleware.error_handler import http_exception_handler, general_exception_handler
+from app.middleware.sandbox import (
+    detect_sandbox,
+    log_startup_sandbox_state,
+    sandbox_inspection_middleware,
+)
 from app.routers import auth, documents, analysis, ask_cfo, dashboard, settings as settings_router, billflow, portfolio, banking
 from app.services.llm_factory import get_embedding_client, get_llm_client
 from app.services.mode_service import get_processing_mode
@@ -39,6 +45,10 @@ app = FastAPI(
 # Setup CORS
 setup_cors(app)
 
+# Sandbox inspection: records AgentVault state per request and echoes it as
+# X-Sandbox so the Security page can show which isolation layer is live.
+app.add_middleware(BaseHTTPMiddleware, dispatch=sandbox_inspection_middleware)
+
 # Add exception handlers
 app.add_exception_handler(HTTPException, http_exception_handler)
 app.add_exception_handler(Exception, general_exception_handler)
@@ -62,6 +72,10 @@ app.include_router(banking.router)
 async def startup_event():
     """Initialize application on startup"""
     logger.info("Starting CASHFLOW application...")
+
+    # Failsafe notice required for sandbox runs: absent the AgentVault markers we
+    # are credential-unisolated, and only okgate is enforcing.
+    app.state.sandbox = log_startup_sandbox_state()
 
     # Create required directories
     os.makedirs("data", exist_ok=True)
@@ -139,6 +153,26 @@ async def startup_event():
 async def shutdown_event(): 
     """Cleanup on shutdown"""
     logger.info("Shutting down CASHFLOW application...")
+
+
+@app.get("/health")
+async def sandbox_health():
+    """Lean liveness probe for sandbox runners (AgentVault / containers).
+
+    Kept separate from `/api/health`, which performs AWS Bedrock and Ollama
+    connection checks and is therefore slow: an external supervisor needs a
+    sub-millisecond answer to "is the process up inside the wrapper".
+    """
+    state = detect_sandbox()
+    return {
+        "status": "ok",
+        "sandbox": state["provider"],
+        "sandbox_profile": state["profile"],
+        "sandbox_markers": state["markers"],
+        "network_isolation": (
+            "not_provided_by_agentvault; okgate remains the enforcement point"
+        ),
+    }
 
 
 @app.get("/api/health")

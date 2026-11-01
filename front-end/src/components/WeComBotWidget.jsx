@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSignedBankingApi } from '../hooks/useSignedBankingApi';
+import { prepareBankingTransfer, bankingCall } from '../services/api';
 
 export function WeComBotWidget() {
   const { user } = useAuth();
@@ -50,15 +51,28 @@ export function WeComBotWidget() {
       setError('');
 
       try {
-        const result = await signedRequest(bankingCall, {
+        // Resolve the payee through the gate instead of trusting a hardcoded
+        // account number: a name is not a bank identifier, and sending money to
+        // an account the user never named is exactly what this layer exists to
+        // prevent. get-recipients is read-class, so it costs no spend allowance.
+        const lookup = await signedRequest(bankingCall, {
+          tool: 'get-recipients',
+          args: { name: creditorName },
+        }, {
+          url: '/api/banking/call',
+        });
+        const matches = ((lookup.data.value || {}).items) || [];
+        if (matches.length === 0) {
+          setResponse(`❌ No recipient named "${creditorName}" on file. Add them first, or use a registered name.`);
+          return;
+        }
+        const creditor = matches[0];
+
+        const result = await signedRequest(prepareBankingTransfer, {
           debtor_account_id: 'acc_cmb_001',
           creditor: {
-            name: creditorName,
-            accountIdentifier: {
-              type: 'accountNumber',
-              accountNumber: '1234567890',
-              country: 'CN',
-            },
+            name: creditor.name,
+            accountIdentifier: creditor.accountIdentifier,
           },
           amount,
           currency: 'CNY',
@@ -68,17 +82,26 @@ export function WeComBotWidget() {
           url: '/api/banking/transfer/prepare',
         });
 
-        if (response.ok) {
-          setResponse(`✅ Transfer prepared!\nIntent ID: ${response.data.intent_id || 'N/A'}\nMessage: ${response.data.message || 'Transfer prepared successfully'}`);
+        const gate = result.data;
+        if (gate.ok) {
+          const next = gate.needs_mfa
+            ? 'MFA code required — confirm it on the Banking page.'
+            : gate.needs_confirmation
+              ? 'Confirmation required — approve it on the Banking page.'
+              : `Intent ID: ${gate.intent_id || 'N/A'}`;
+          setResponse(
+            `✅ Transfer prepared: ¥${amount.toLocaleString()} to ${creditor.name}\n${next}`
+          );
         } else {
-          setResponse(`❌ Transfer refused: ${response.data.message || 'Unknown error'}`);
+          setResponse(`❌ Gate refused (${gate.code || 'unknown'}): ${gate.message || 'No reason given'}`);
         }
       } catch (err) {
-        setError(`Connection error: ${err.message}`);
+        setError(err.response?.data?.detail || err.message || 'Banking request failed');
+      } finally {
+        setSending(false);
       }
     } catch (err) {
       setError(err.message);
-    } finally {
       setSending(false);
     }
   };

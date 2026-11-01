@@ -35,7 +35,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from cryptography.hazmat.primitives.serialization import load_pem_public_key
+from cryptography.hazmat.primitives.serialization import (
+    load_der_public_key,
+    load_pem_public_key,
+)
 from pydantic import BaseModel, Field, ValidationError
 
 # Make `banking_agent` importable (it lives one level up from `app/`).
@@ -71,15 +74,13 @@ from app.core.security.audit_ledger import (  # noqa: E402
 )
 from app.core.security.keys import load_private_key  # noqa: E402
 from app.config import get_settings  # noqa: E402
+from app.services.banking_service import _log_decision  # noqa: E402
 from app.schemas import (  # noqa: E402
-    TransferPrepareRequest as SchemaTransferPrepare,
-    TransferExecuteRequest as SchemaTransferExecute,
-    TransferExecuteApproveRequest as SchemaTransferExecuteApprove,
-    CallRequest as SchemaCallRequest,
+    TransferPrepareRequest,
+    TransferExecuteRequest,
+    TransferExecuteApproveRequest,
+    CallRequest,
     CreditorAccount,
-    MfaChallengeRequest as SchemaMfaChallengeRequest,
-    MfaVerifyRequest as SchemaMfaVerifyRequest,
-    KillRequest as SchemaKillRequest,
 )
 
 router = APIRouter(prefix="/api/banking", tags=["banking-security"])
@@ -96,6 +97,25 @@ SPEND_LEDGER = STATE_DIR / "daily_spend.json"
 
 #: Shared MFA verifier across requests.
 MFA_CODE_STORE: dict[str, str] = {}
+MFA_VERIFIER = SmsCodeMfa(
+    deliver=lambda subject, challenge_id, code: MFA_CODE_STORE.__setitem__(
+        challenge_id, code
+    )
+)
+
+#: Idempotency cache: Idempotency-Key -> the response first returned for it.
+IDEMPOTENCY_CACHE: dict[str, dict[str, Any]] = {}
+IDEMPOTENCY_CACHE_MAX = 512
+
+
+def _check_idempotency(key: str) -> Optional[dict[str, Any]]:
+    return IDEMPOTENCY_CACHE.get(key)
+
+
+def _store_idempotent_response(key: str, response: dict[str, Any]) -> None:
+    if len(IDEMPOTENCY_CACHE) >= IDEMPOTENCY_CACHE_MAX:
+        IDEMPOTENCY_CACHE.pop(next(iter(IDEMPOTENCY_CACHE)))
+    IDEMPOTENCY_CACHE[key] = response
 
 #: FX API configuration
 FX_API_KEY: str = os.environ.get("EXCHANGERATE_API_KEY", "")
@@ -108,6 +128,20 @@ FX_RATE_CACHE: dict[str, tuple[float, float]] = {}
 #: FX conversion fee rate (percentage of converted amount)
 FX_CONVERSION_FEE_RATE: float = 0.01  # 1% conversion fee
 FX_RATES: dict[str, float] = {}
+
+
+class MfaChallengeRequest(BaseModel):
+    subject: str = Field(..., min_length=1, max_length=200)
+    purpose: str = Field(..., min_length=1, max_length=500)
+
+
+class MfaVerifyRequest(BaseModel):
+    challenge_id: str = Field(..., min_length=1, max_length=200)
+    code: str = Field(..., min_length=1, max_length=20)
+
+
+class KillRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=500)
 
 
 class FXRateRequest(BaseModel):
@@ -146,8 +180,12 @@ def _verify_frontend_signature(request: Request, body_bytes: bytes) -> dict[str,
     try:
         if abs(time.time() - int(timestamp)) > 300:
             raise ValueError("stale request")
-        public_key_pem = base64.b64decode(public_key_b64)
-        public_key = load_pem_public_key(public_key_pem)
+        public_key_bytes = base64.b64decode(public_key_b64)
+        # Web Crypto exports SPKI DER; PEM is accepted for non-browser clients.
+        try:
+            public_key = load_pem_public_key(public_key_bytes)
+        except ValueError:
+            public_key = load_der_public_key(public_key_bytes)
         body = json.loads(body_bytes.decode("utf-8")) if body_bytes else None
         canonical_body = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         expected_stid = compute_stid(
@@ -167,23 +205,36 @@ def _verify_frontend_signature(request: Request, body_bytes: bytes) -> dict[str,
 
 
 def transfer_outcome_to_dict(outcome: Any) -> dict[str, Any]:
+    """Project a gate result onto the JSON shape the banking UI renders.
+
+    Accepts both a TransferOutcome -- which carries the phase result in
+    `prepared`/`executed` -- and a bare GateOutcome from a generic tool call.
+    """
+    is_transfer = hasattr(outcome, "prepared") or hasattr(outcome, "executed")
+    phase = (outcome.executed or outcome.prepared) if is_transfer else outcome
+    code = phase.code if phase else None
     return {
         "ok": outcome.ok,
-        "code": outcome.code,
+        "stage": outcome.stage if is_transfer else None,
+        "code": code,
         "message": outcome.message,
         "tier": outcome.tier.value if outcome.tier else None,
-        "amount_cny": str(outcome.amount_cny) if outcome.amount_cny is not None else None,
+        "amount_cny": str(phase.amount_cny) if phase and phase.amount_cny is not None else None,
         "projected_daily_cny": (
-            str(outcome.projected_daily_cny)
-            if outcome.projected_daily_cny is not None
+            str(phase.projected_daily_cny)
+            if phase and phase.projected_daily_cny is not None
             else None
         ),
-        "intent_id": outcome.transfer_intent_id,
-        "approval_id": outcome.approval_id,
-        "approval_command": outcome.approval_command,
-        "details": outcome.details or {},
-        "value": outcome.value,
-        "stage": getattr(outcome, "stage", None),
+        "intent_id": outcome.intent_id if is_transfer else (phase.transfer_intent_id if phase else None),
+        "approval_id": outcome.approval_id if is_transfer else (phase.approval_id if phase else None),
+        "approval_command": (
+            outcome.approval_command if is_transfer else (phase.approval_command if phase else None)
+        ),
+        "needs_confirmation": code == GateCode.CONFIRMATION_REQUIRED.value,
+        "needs_mfa": code == GateCode.MFA_REQUIRED.value,
+        "needs_approval": code == GateCode.APPROVAL_REQUIRED.value,
+        "details": (phase.details if phase else None) or {},
+        "value": phase.value if phase else None,
     }
 
 
@@ -202,7 +253,7 @@ async def _open_gate(user: models.User, request: Request):
         gate = SecureBankGate(
             client=client,
             spend=DailySpendLedger(SPEND_LEDGER),
-            mfa=SmsCodeMfa(deliver=lambda subject, challenge_id, code: MFA_CODE_STORE.__setitem__(challenge_id, code)),
+            mfa=MFA_VERIFIER,
             subject=str(user.user_id),
         )
         yield gate, client
@@ -357,7 +408,7 @@ async def list_tools(
 @router.post("/call")
 async def generic_call(
     request: Request,
-    payload: SchemaCallRequest,
+    payload: CallRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Generic SecureBankGate.call -- any tool, any tier.
@@ -371,9 +422,9 @@ async def generic_call(
 
     # Schema validation (Layer 1 defense-in-depth)
     try:
-        SchemaCallRequest(
+        CallRequest(
             tool=payload.tool,
-            args=payload.args or None,
+            args=payload.args or {},
             confirmed=payload.confirmed,
             mfa_challenge_id=payload.mfa_challenge_id,
             mfa_code=payload.mfa_code,
@@ -392,8 +443,8 @@ async def generic_call(
         )
 
     # Canonicalize + hash for backend signing to okgate
-    canonical_args = canonicalize(payload.args or {})
-    args_hash = hash_payload(canonical_args)
+    canonical = canonicalize(payload.args or {})
+    args_hash = hash_payload(canonical)
 
     async for gate, client in _open_gate(user, request):
         try:
@@ -422,7 +473,7 @@ async def generic_call(
     signing_key = _get_signing_key(request)
     backend_sig = None
     if signing_key is not None:
-        backend_sig = sign_bytes(signing_key, canonical_args.encode("utf-8"))
+        backend_sig = sign_bytes(signing_key, canonical.encode("utf-8"))
 
     _log_decision(
         user.user_id,
@@ -451,7 +502,7 @@ async def generic_call(
 @router.post("/transfer/prepare")
 async def transfer_prepare(
     request: Request,
-    payload: SchemaTransferPrepare,
+    payload: TransferPrepareRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Phase 1 of a transfer: price + reserve an intent (may need confirmation/MFA).
@@ -472,7 +523,7 @@ async def transfer_prepare(
 
     # Schema validation (Layer 1)
     try:
-        schema_req = SchemaTransferPrepare(
+        schema_req = TransferPrepareRequest(
             debtor_account_id=payload.debtor_account_id,
             creditor=payload.creditor,
             amount=payload.amount,
@@ -536,7 +587,7 @@ async def transfer_prepare(
     signing_key = _get_signing_key(request)
     backend_sig = None
     if signing_key is not None:
-        backend_sig = sign_bytes(signing_key, canonical_args.encode("utf-8"))
+        backend_sig = sign_bytes(signing_key, canonical.encode("utf-8"))
 
     _log_decision(
         user.user_id,
@@ -573,7 +624,7 @@ async def transfer_prepare(
 @router.post("/transfer/execute")
 async def transfer_execute(
     request: Request,
-    payload: SchemaTransferExecute,
+    payload: TransferExecuteRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Phase 2 of a transfer: settle a prepared intent (may need approval)."""
@@ -588,7 +639,7 @@ async def transfer_execute(
             return cached
 
     try:
-        SchemaTransferExecute(intent_id=payload.intent_id)
+        TransferExecuteRequest(intent_id=payload.intent_id)
     except ValidationError as ve:
         _log_decision(
             user.user_id,
@@ -661,7 +712,7 @@ async def transfer_execute(
 async def transfer_execute_approve(
     request: Request,
     intent_id: str,
-    payload: SchemaTransferExecuteApprove,
+    payload: TransferExecuteApproveRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Human approves a held execute-transfer, then re-executes it."""
@@ -669,7 +720,7 @@ async def transfer_execute_approve(
     sig_info = _verify_frontend_signature(request, body_bytes)
 
     try:
-        SchemaTransferExecuteApprove(approval_id=payload.approval_id)
+        TransferExecuteApproveRequest(approval_id=payload.approval_id)
     except ValidationError as ve:
         _log_decision(
             user.user_id,
@@ -742,7 +793,7 @@ async def transfer_execute_approve(
 @router.post("/mfa/challenge")
 async def mfa_challenge(
     request: Request,
-    payload: SchemaMfaChallengeRequest,
+    payload: MfaChallengeRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Start a Red-tier MFA challenge. Code is stored server-side (SMS sim)."""
@@ -798,7 +849,7 @@ async def mfa_code(
 @router.post("/mfa/verify")
 async def mfa_verify(
     request: Request,
-    payload: SchemaMfaVerifyRequest,
+    payload: MfaVerifyRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Submit a code against a challenge. Consumes the challenge on success."""
@@ -821,7 +872,7 @@ async def mfa_verify(
 @router.post("/kill")
 async def kill_switch(
     request: Request,
-    payload: SchemaKillRequest,
+    payload: KillRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Halt every call (kill switch). Requires admin role."""
@@ -888,7 +939,602 @@ async def resume_switch(
 
 
 @router.get("/status")
-async def status(
+async def banking_status(
+    request: Request, user: models.User = Depends(get_current_user)
+):
+    """Counters versus caps, kill state, and pending approvals (raw CLI text)."""
+    body_bytes = b""
+    sig_info = _verify_frontend_signature(request, body_bytes)
+
+    async for gate, client in _open_gate(user, request):
+        try:
+            result = await client.status()
+        except Exception as exc:
+            _log_decision(
+                user.user_id,
+                "status",
+                {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+                "error",
+                {"error": str(exc)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            )
+
+    _log_decision(
+        user.user_id,
+        "status",
+        {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+        "ok",
+        {},
+    )
+    return {"status": result, "stid": sig_info["stid"]}
+
+
+@router.get("/spend")
+async def spend_today(
+    request: Request, user: models.User = Depends(get_current_user)
+):
+    """Today's authorised cumulative spend in CNY."""
+    body_bytes = b""
+    sig_info = _verify_frontend_signature(request, body_bytes)
+
+    spent = DailySpendLedger(SPEND_LEDGER).spent_today()
+    _log_decision(
+        user.user_id,
+        "spend",
+        {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+        "ok",
+        {"spent_today_cny": str(spent)},
+    )
+    return {"spent_today_cny": str(spent), "stid": sig_info["stid"]}
+
+
+@router.get("/approvals")
+async def approvals(
+    request: Request, user: models.User = Depends(get_current_user)
+):
+    """Pending approvals awaiting human release (raw CLI text)."""
+    body_bytes = b""
+    sig_info = _verify_frontend_signature(request, body_bytes)
+
+    async for gate, client in _open_gate(user, request):
+        try:
+            result = await client.pending_approvals()
+        except Exception as exc:
+            _log_decision(
+                user.user_id,
+                "approvals",
+                {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+                "error",
+                {"error": str(exc)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            )
+
+    _log_decision(
+        user.user_id,
+        "approvals",
+        {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+        "ok",
+        {},
+    )
+    return {"approvals": result, "stid": sig_info["stid"]}
+
+
+@router.get("/audit")
+async def audit(
+    request: Request, user: models.User = Depends(get_current_user)
+):
+    """Audit entries okgate has appended, oldest first."""
+    body_bytes = b""
+    sig_info = _verify_frontend_signature(request, body_bytes)
+
+    async for gate, client in _open_gate(user, request):
+        try:
+            entries = await client.read_audit()
+        except Exception as exc:
+            _log_decision(
+                user.user_id,
+                "audit_read",
+                {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+                "error",
+                {"error": str(exc)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            )
+
+    _log_decision(
+        user.user_id,
+        "audit_read",
+        {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+        "ok",
+        {"entry_count": len(entries)},
+    )
+    return {"audit": entries, "stid": sig_info["stid"]}
+
+
+@router.get("/audit/verify")
+async def audit_verify(
+    request: Request, user: models.User = Depends(get_current_user)
+):
+    """Verify the hash-chained integrity of both okgate audit and backend decision log."""
+    body_bytes = b""
+    sig_info = _verify_frontend_signature(request, body_bytes)
+
+    async for gate, client in _open_gate(user, request):
+        try:
+            okgate_result = await client.verify_audit()
+        except Exception as exc:
+            _log_decision(
+                user.user_id,
+                "audit_verify",
+                {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+                "error",
+                {"error": str(exc)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            )
+
+    ledger_ok = decision_ledger.verify_chain() if decision_ledger else False
+    _log_decision(
+        user.user_id,
+        "audit_verify",
+        {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+        "ok",
+        {"okgate": okgate_result, "ledger": ledger_ok},
+    )
+    return {
+        "okgate": okgate_result,
+        "ledger": ledger_ok,
+        "stid": sig_info["stid"],
+    }
+
+
+@router.post("/transfer/prepare")
+async def transfer_prepare(
+    request: Request,
+    payload: TransferPrepareRequest,
+    user: models.User = Depends(get_current_user),
+):
+    """Phase 1 of a transfer: price + reserve an intent (may need confirmation/MFA).
+
+    Layer 1: Pydantic schema validation rejects invalid amounts/currencies.
+    Layer 2: canonicalize + backend signing before okgate.
+    Layer 3: Idempotency key prevents double-execution on retries.
+    """
+    body_bytes = await request.body()
+    sig_info = _verify_frontend_signature(request, body_bytes)
+
+    # Check idempotency key - return cached response if duplicate request
+    idempotency_key = request.headers.get("Idempotency-Key")
+    if idempotency_key:
+        cached = _check_idempotency(idempotency_key)
+        if cached is not None:
+            return cached
+
+    # Schema validation (Layer 1)
+    try:
+        schema_req = TransferPrepareRequest(
+            debtor_account_id=payload.debtor_account_id,
+            creditor=payload.creditor,
+            amount=payload.amount,
+            currency=payload.currency,
+            rail=payload.rail,
+            description=payload.description,
+        )
+    except ValidationError as ve:
+        _log_decision(
+            user.user_id,
+            "transfer_prepare",
+            {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+            "blocked",
+            {"reason": f"schema_validation_failed: {ve.errors()}", "stid": sig_info["stid"]},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Schema validation failed: {ve.errors()}",
+        )
+
+    canonical = canonicalize(
+        {
+            "debtor_account_id": schema_req.debtor_account_id,
+            "creditor": schema_req.creditor,
+            "amount": schema_req.amount,
+            "currency": schema_req.currency,
+            "rail": schema_req.rail,
+            "description": schema_req.description,
+        }
+    )
+    args_hash = hash_payload(canonical)
+
+    async for gate, client in _open_gate(user, request):
+        try:
+            outcome = await gate.transfer(
+                debtor_account_id=payload.debtor_account_id,
+                creditor=payload.creditor,
+                amount=payload.amount,
+                currency=payload.currency,
+                rail=payload.rail,
+                description=payload.description,
+                confirmed=payload.confirmed,
+                mfa_challenge_id=payload.mfa_challenge_id,
+                mfa_code=payload.mfa_code,
+            )
+        except Exception as exc:
+            _log_decision(
+                user.user_id,
+                "transfer_prepare",
+                {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+                "error",
+                {"error": str(exc)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            )
+        finally:
+            await client.close()
+
+    # Backend re-signs the canonical payload for the bank/okgate upstream
+    signing_key = _get_signing_key(request)
+    backend_sig = None
+    if signing_key is not None:
+        backend_sig = sign_bytes(signing_key, canonical.encode("utf-8"))
+
+    _log_decision(
+        user.user_id,
+        "transfer_prepare",
+        {
+            "debtor_account_id": payload.debtor_account_id,
+            "amount": payload.amount,
+            "currency": payload.currency,
+            "client_id": sig_info["client_id"],
+            "args_hash": args_hash,
+            "stid": sig_info["stid"],
+        },
+        "ok" if outcome.ok else "refused",
+        {
+            "stage": outcome.stage,
+            "tier": outcome.tier.value if outcome.tier else None,
+            "code": outcome.prepared.code if outcome.prepared else None,
+            "intent_id": outcome.intent_id,
+            "backend_signature": backend_sig,
+        },
+    )
+
+    result = transfer_outcome_to_dict(outcome)
+    result["stid"] = sig_info["stid"]
+    result["backend_signature"] = backend_sig
+
+    # Store idempotent response if key provided
+    if idempotency_key:
+        _store_idempotent_response(idempotency_key, result)
+
+    return result
+
+
+@router.post("/transfer/execute")
+async def transfer_execute(
+    request: Request,
+    payload: TransferExecuteRequest,
+    user: models.User = Depends(get_current_user),
+):
+    """Phase 2 of a transfer: settle a prepared intent (may need approval)."""
+    body_bytes = await request.body()
+    sig_info = _verify_frontend_signature(request, body_bytes)
+
+    # Check idempotency key - return cached response if duplicate request
+    idempotency_key = request.headers.get("Idempotency-Key")
+    if idempotency_key:
+        cached = _check_idempotency(idempotency_key)
+        if cached is not None:
+            return cached
+
+    try:
+        TransferExecuteRequest(intent_id=payload.intent_id)
+    except ValidationError as ve:
+        _log_decision(
+            user.user_id,
+            "transfer_execute",
+            {"intent_id": payload.intent_id, "client_id": sig_info["client_id"]},
+            "blocked",
+            {"reason": f"schema_validation_failed: {ve.errors()}", "stid": sig_info["stid"]},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Schema validation failed: {ve.errors()}",
+        )
+
+    canonical = canonicalize({"intent_id": payload.intent_id})
+    args_hash = hash_payload(canonical)
+
+    async for gate, client in _open_gate(user, request):
+        try:
+            outcome = await gate.execute(payload.intent_id)
+        except Exception as exc:
+            _log_decision(
+                user.user_id,
+                "transfer_execute",
+                {"intent_id": payload.intent_id, "client_id": sig_info["client_id"]},
+                "error",
+                {"error": str(exc), "stid": sig_info["stid"]},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            )
+        finally:
+            await client.close()
+
+    signing_key = _get_signing_key(request)
+    backend_sig = None
+    if signing_key is not None:
+        backend_sig = sign_bytes(signing_key, canonical.encode("utf-8"))
+
+    _log_decision(
+        user.user_id,
+        "transfer_execute",
+        {
+            "intent_id": payload.intent_id,
+            "client_id": sig_info["client_id"],
+            "args_hash": args_hash,
+            "stid": sig_info["stid"],
+        },
+        "ok" if outcome.ok else "refused",
+        {
+            "stage": outcome.stage,
+            "tier": outcome.tier.value if outcome.tier else None,
+            "code": outcome.executed.code if outcome.executed else None,
+            "approval_id": outcome.approval_id,
+            "backend_signature": backend_sig,
+        },
+    )
+
+    result = transfer_outcome_to_dict(outcome)
+    result["stid"] = sig_info["stid"]
+    result["backend_signature"] = backend_sig
+
+    # Store idempotent response if key provided
+    if idempotency_key:
+        _store_idempotent_response(idempotency_key, result)
+
+    return result
+
+
+@router.post("/transfer/execute/{intent_id}/approve")
+async def transfer_execute_approve(
+    request: Request,
+    intent_id: str,
+    payload: TransferExecuteApproveRequest,
+    user: models.User = Depends(get_current_user),
+):
+    """Human approves a held execute-transfer, then re-executes it."""
+    body_bytes = await request.body()
+    sig_info = _verify_frontend_signature(request, body_bytes)
+
+    try:
+        TransferExecuteApproveRequest(approval_id=payload.approval_id)
+    except ValidationError as ve:
+        _log_decision(
+            user.user_id,
+            "transfer_approve",
+            {"intent_id": intent_id, "approval_id": payload.approval_id, "client_id": sig_info["client_id"]},
+            "blocked",
+            {"reason": f"schema_validation_failed: {ve.errors()}", "stid": sig_info["stid"]},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Schema validation failed: {ve.errors()}",
+        )
+
+    async for gate, client in _open_gate(user, request):
+        try:
+            release = await client.approve(payload.approval_id)
+        except Exception as exc:
+            _log_decision(
+                user.user_id,
+                "transfer_approve",
+                {"intent_id": intent_id, "approval_id": payload.approval_id, "client_id": sig_info["client_id"]},
+                "error",
+                {"error": str(exc), "stid": sig_info["stid"]},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            )
+        try:
+            outcome = await gate.execute(intent_id)
+        except Exception as exc:
+            _log_decision(
+                user.user_id,
+                "transfer_execute_after_approve",
+                {"intent_id": intent_id, "client_id": sig_info["client_id"]},
+                "error",
+                {"error": str(exc), "stid": sig_info["stid"]},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            )
+
+    signing_key = _get_signing_key(request)
+    backend_sig = None
+    if signing_key is not None:
+        backend_sig = sign_bytes(signing_key, intent_id.encode("utf-8"))
+
+    _log_decision(
+        user.user_id,
+        "transfer_approve",
+        {
+            "intent_id": intent_id,
+            "approval_id": payload.approval_id,
+            "client_id": sig_info["client_id"],
+            "stid": sig_info["stid"],
+        },
+        "ok" if outcome.ok else "refused",
+        {
+            "stage": outcome.stage,
+            "approval_release": release,
+            "backend_signature": backend_sig,
+        },
+    )
+
+    result = transfer_outcome_to_dict(outcome)
+    result["stid"] = sig_info["stid"]
+    result["backend_signature"] = backend_sig
+    return result
+
+
+@router.post("/mfa/challenge")
+async def mfa_challenge(
+    request: Request,
+    payload: MfaChallengeRequest,
+    user: models.User = Depends(get_current_user),
+):
+    """Start a Red-tier MFA challenge. Code is stored server-side (SMS sim)."""
+    body_bytes = await request.body()
+    sig_info = _verify_frontend_signature(request, body_bytes)
+
+    challenge_id = await MFA_VERIFIER.challenge(
+        subject=payload.subject, purpose=payload.purpose
+    )
+    _log_decision(
+        user.user_id,
+        "mfa_challenge",
+        {"challenge_id": challenge_id, "client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+        "ok",
+        {"subject": payload.subject, "purpose": payload.purpose},
+    )
+    return {"challenge_id": challenge_id, "stid": sig_info["stid"]}
+
+
+@router.get("/mfa/code/{challenge_id}")
+async def mfa_code(
+    challenge_id: str,
+    request: Request,
+    user: models.User = Depends(get_current_user),
+):
+    """Return the delivered code for a challenge (SMS simulation only).
+
+    In demo mode (DEMO_MODE=true), returns the code so the frontend can
+    demonstrate the full MFA flow. In production, returns a message
+    indicating the code was delivered via the real channel.
+    """
+    body_bytes = b""
+    sig_info = _verify_frontend_signature(request, body_bytes)
+
+    code = MFA_CODE_STORE.get(challenge_id)
+    if code is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="no code found for that challenge",
+        )
+
+    demo_mode = os.environ.get("DEMO_MODE", "false").lower() == "true"
+    if demo_mode:
+        return {"challenge_id": challenge_id, "code": code, "stid": sig_info["stid"]}
+    else:
+        return {
+            "challenge_id": challenge_id,
+            "message": "Code delivered to registered phone number",
+            "stid": sig_info["stid"],
+        }
+
+
+@router.post("/mfa/verify")
+async def mfa_verify(
+    request: Request,
+    payload: MfaVerifyRequest,
+    user: models.User = Depends(get_current_user),
+):
+    """Submit a code against a challenge. Consumes the challenge on success."""
+    body_bytes = await request.body()
+    sig_info = _verify_frontend_signature(request, body_bytes)
+
+    valid = await MFA_VERIFIER.verify(
+        challenge_id=payload.challenge_id, code=payload.code
+    )
+    _log_decision(
+        user.user_id,
+        "mfa_verify",
+        {"challenge_id": payload.challenge_id, "client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+        "ok" if valid else "failed",
+        {"valid": valid},
+    )
+    return {"valid": valid, "stid": sig_info["stid"]}
+
+
+@router.post("/kill")
+async def kill_switch(
+    request: Request,
+    payload: KillRequest,
+    user: models.User = Depends(get_current_user),
+):
+    """Halt every call (kill switch). Requires admin role."""
+    body_bytes = await request.body()
+    sig_info = _verify_frontend_signature(request, body_bytes)
+
+    async for gate, client in _open_gate(user, request):
+        try:
+            result = await client.kill(payload.reason)
+        except Exception as exc:
+            _log_decision(
+                user.user_id,
+                "kill_switch",
+                {"reason": payload.reason, "client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+                "error",
+                {"error": str(exc)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            )
+
+    _log_decision(
+        user.user_id,
+        "kill_switch",
+        {"reason": payload.reason, "client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+        "ok",
+        {"result": result},
+    )
+    return {"result": result, "stid": sig_info["stid"]}
+
+
+@router.post("/resume")
+async def resume_switch(
+    request: Request,
+    user: models.User = Depends(get_current_user),
+):
+    """Clear the kill switch and resume normal service. Requires admin role."""
+    body_bytes = b""
+    sig_info = _verify_frontend_signature(request, body_bytes)
+
+    async for gate, client in _open_gate(user, request):
+        try:
+            result = await client.resume()
+        except Exception as exc:
+            _log_decision(
+                user.user_id,
+                "resume",
+                {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+                "error",
+                {"error": str(exc)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            )
+
+    _log_decision(
+        user.user_id,
+        "resume",
+        {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
+        "ok",
+        {"result": result},
+    )
+    return {"result": result, "stid": sig_info["stid"]}
+
+
+@router.get("/status")
+async def banking_status(
     request: Request, user: models.User = Depends(get_current_user)
 ):
     """Counters versus caps, kill state, and pending approvals (raw CLI text)."""
@@ -1027,7 +1673,7 @@ async def audit_verify(
 @router.post("/transfer/prepare")
 async def transfer_prepare(
     request: Request,
-    payload: SchemaTransferPrepare,
+    payload: TransferPrepareRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Phase 1 of a transfer: price + reserve an intent (may need confirmation/MFA).
@@ -1048,7 +1694,7 @@ async def transfer_prepare(
 
     # Schema validation (Layer 1)
     try:
-        schema_req = SchemaTransferPrepare(
+        schema_req = TransferPrepareRequest(
             debtor_account_id=payload.debtor_account_id,
             creditor=payload.creditor,
             amount=payload.amount,
@@ -1109,95 +1755,6 @@ async def transfer_prepare(
             await client.close()
 
     # Backend re-signs the canonical payload for the bank/okgate upstream
-    signing_key = _get_signing_key(request)
-    backend_sig = None
-    if signing_key is not None:
-        backend_sig = sign_bytes(signing_key, canonical_args.encode("utf-8"))
-
-    _log_decision(
-        user.user_id,
-        "transfer_prepare",
-        {
-            "debtor_account_id": payload.debtor_account_id,
-            "amount": payload.amount,
-            "currency": payload.currency,
-            "client_id": sig_info["client_id"],
-            "args_hash": args_hash,
-            "stid": sig_info["stid"],
-        },
-        "ok" if outcome.ok else "refused",
-        {
-            "stage": outcome.stage,
-            "tier": outcome.tier.value if outcome.tier else None,
-            "code": outcome.prepared.code if outcome.prepared else None,
-            "intent_id": outcome.intent_id,
-            "backend_signature": backend_sig,
-        },
-    )
-
-    result = transfer_outcome_to_dict(outcome)
-    result["stid"] = sig_info["stid"]
-    result["backend_signature"] = backend_sig
-
-    # Store idempotent response if key provided
-    if idempotency_key:
-        _store_idempotent_response(idempotency_key, result)
-
-    return result
-
-
-@router.post("/transfer/execute")
-async def transfer_execute(
-    request: Request,
-    payload: SchemaTransferExecute,
-    user: models.User = Depends(get_current_user),
-):
-    """Phase 2 of a transfer: settle a prepared intent (may need approval)."""
-    body_bytes = await request.body()
-    sig_info = _verify_frontend_signature(request, body_bytes)
-
-    # Check idempotency key - return cached response if duplicate request
-    idempotency_key = request.headers.get("Idempotency-Key")
-    if idempotency_key:
-        cached = _check_idempotency(idempotency_key)
-        if cached is not None:
-            return cached
-
-    try:
-        SchemaTransferExecute(intent_id=payload.intent_id)
-    except ValidationError as ve:
-        _log_decision(
-            user.user_id,
-            "transfer_execute",
-            {"intent_id": payload.intent_id, "client_id": sig_info["client_id"]},
-            "blocked",
-            {"reason": f"schema_validation_failed: {ve.errors()}", "stid": sig_info["stid"]},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Schema validation failed: {ve.errors()}",
-        )
-
-    canonical = canonicalize({"intent_id": payload.intent_id})
-    args_hash = hash_payload(canonical)
-
-    async for gate, client in _open_gate(user, request):
-        try:
-            outcome = await gate.execute(payload.intent_id)
-        except Exception as exc:
-            _log_decision(
-                user.user_id,
-                "transfer_execute",
-                {"intent_id": payload.intent_id, "client_id": sig_info["client_id"]},
-                "error",
-                {"error": str(exc), "stid": sig_info["stid"]},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-            )
-        finally:
-            await client.close()
-
     signing_key = _get_signing_key(request)
     backend_sig = None
     if signing_key is not None:
@@ -1205,493 +1762,6 @@ async def transfer_execute(
 
     _log_decision(
         user.user_id,
-        "transfer_execute",
-        {
-            "intent_id": payload.intent_id,
-            "client_id": sig_info["client_id"],
-            "args_hash": args_hash,
-            "stid": sig_info["stid"],
-        },
-        "ok" if outcome.ok else "refused",
-        {
-            "stage": outcome.stage,
-            "tier": outcome.tier.value if outcome.tier else None,
-            "code": outcome.executed.code if outcome.executed else None,
-            "approval_id": outcome.approval_id,
-            "backend_signature": backend_sig,
-        },
-    )
-
-    result = transfer_outcome_to_dict(outcome)
-    result["stid"] = sig_info["stid"]
-    result["backend_signature"] = backend_sig
-
-    # Store idempotent response if key provided
-    if idempotency_key:
-        _store_idempotent_response(idempotency_key, result)
-
-    return result
-
-
-@router.post("/transfer/execute/{intent_id}/approve")
-async def transfer_execute_approve(
-    request: Request,
-    intent_id: str,
-    payload: SchemaTransferExecuteApprove,
-    user: models.User = Depends(get_current_user),
-):
-    """Human approves a held execute-transfer, then re-executes it."""
-    body_bytes = await request.body()
-    sig_info = _verify_frontend_signature(request, body_bytes)
-
-    try:
-        SchemaTransferExecuteApprove(approval_id=payload.approval_id)
-    except ValidationError as ve:
-        _log_decision(
-            user.user_id,
-            "transfer_approve",
-            {"intent_id": intent_id, "approval_id": payload.approval_id, "client_id": sig_info["client_id"]},
-            "blocked",
-            {"reason": f"schema_validation_failed: {ve.errors()}", "stid": sig_info["stid"]},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Schema validation failed: {ve.errors()}",
-        )
-
-    async for gate, client in _open_gate(user, request):
-        try:
-            release = await client.approve(payload.approval_id)
-        except Exception as exc:
-            _log_decision(
-                user.user_id,
-                "transfer_approve",
-                {"intent_id": intent_id, "approval_id": payload.approval_id, "client_id": sig_info["client_id"]},
-                "error",
-                {"error": str(exc), "stid": sig_info["stid"]},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-            )
-        try:
-            outcome = await gate.execute(intent_id)
-        except Exception as exc:
-            _log_decision(
-                user.user_id,
-                "transfer_execute_after_approve",
-                {"intent_id": intent_id, "client_id": sig_info["client_id"]},
-                "error",
-                {"error": str(exc), "stid": sig_info["stid"]},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-            )
-
-    signing_key = _get_signing_key(request)
-    backend_sig = None
-    if signing_key is not None:
-        backend_sig = sign_bytes(signing_key, intent_id.encode("utf-8"))
-
-    _log_decision(
-        user.user_id,
-        "transfer_approve",
-        {
-            "intent_id": intent_id,
-            "approval_id": payload.approval_id,
-            "client_id": sig_info["client_id"],
-            "stid": sig_info["stid"],
-        },
-        "ok" if outcome.ok else "refused",
-        {
-            "stage": outcome.stage,
-            "approval_release": release,
-            "backend_signature": backend_sig,
-        },
-    )
-
-    result = transfer_outcome_to_dict(outcome)
-    result["stid"] = sig_info["stid"]
-    result["backend_signature"] = backend_sig
-    return result
-
-
-@router.post("/mfa/challenge")
-async def mfa_challenge(
-    request: Request,
-    payload: SchemaMfaChallengeRequest,
-    user: models.User = Depends(get_current_user),
-):
-    """Start a Red-tier MFA challenge. Code is stored server-side (SMS sim)."""
-    body_bytes = await request.body()
-    sig_info = _verify_frontend_signature(request, body_bytes)
-
-    challenge_id = await MFA_VERIFIER.challenge(
-        subject=payload.subject, purpose=payload.purpose
-    )
-    _log_decision(
-        user.user_id,
-        "mfa_challenge",
-        {"challenge_id": challenge_id, "client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-        "ok",
-        {"subject": payload.subject, "purpose": payload.purpose},
-    )
-    return {"challenge_id": challenge_id, "stid": sig_info["stid"]}
-
-
-@router.get("/mfa/code/{challenge_id}")
-async def mfa_code(
-    challenge_id: str,
-    request: Request,
-    user: models.User = Depends(get_current_user),
-):
-    """Return the delivered code for a challenge (SMS simulation only).
-
-    In demo mode (DEMO_MODE=true), returns the code so the frontend can
-    demonstrate the full MFA flow. In production, returns a message
-    indicating the code was delivered via the real channel.
-    """
-    body_bytes = b""
-    sig_info = _verify_frontend_signature(request, body_bytes)
-
-    code = MFA_CODE_STORE.get(challenge_id)
-    if code is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="no code found for that challenge",
-        )
-
-    demo_mode = os.environ.get("DEMO_MODE", "false").lower() == "true"
-    if demo_mode:
-        return {"challenge_id": challenge_id, "code": code, "stid": sig_info["stid"]}
-    else:
-        return {
-            "challenge_id": challenge_id,
-            "message": "Code delivered to registered phone number",
-            "stid": sig_info["stid"],
-        }
-
-
-@router.post("/mfa/verify")
-async def mfa_verify(
-    request: Request,
-    payload: SchemaMfaVerifyRequest,
-    user: models.User = Depends(get_current_user),
-):
-    """Submit a code against a challenge. Consumes the challenge on success."""
-    body_bytes = await request.body()
-    sig_info = _verify_frontend_signature(request, body_bytes)
-
-    valid = await MFA_VERIFIER.verify(
-        challenge_id=payload.challenge_id, code=payload.code
-    )
-    _log_decision(
-        user.user_id,
-        "mfa_verify",
-        {"challenge_id": payload.challenge_id, "client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-        "ok" if valid else "failed",
-        {"valid": valid},
-    )
-    return {"valid": valid, "stid": sig_info["stid"]}
-
-
-@router.post("/kill")
-async def kill_switch(
-    request: Request,
-    payload: SchemaKillRequest,
-    user: models.User = Depends(get_current_user),
-):
-    """Halt every call (kill switch). Requires admin role."""
-    body_bytes = await request.body()
-    sig_info = _verify_frontend_signature(request, body_bytes)
-
-    async for gate, client in _open_gate(user, request):
-        try:
-            result = await client.kill(payload.reason)
-        except Exception as exc:
-            _log_decision(
-                user.user_id,
-                "kill_switch",
-                {"reason": payload.reason, "client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-                "error",
-                {"error": str(exc)},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-            )
-
-    _log_decision(
-        user.user_id,
-        "kill_switch",
-        {"reason": payload.reason, "client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-        "ok",
-        {"result": result},
-    )
-    return {"result": result, "stid": sig_info["stid"]}
-
-
-@router.post("/resume")
-async def resume_switch(
-    request: Request,
-    user: models.User = Depends(get_current_user),
-):
-    """Clear the kill switch and resume normal service. Requires admin role."""
-    body_bytes = b""
-    sig_info = _verify_frontend_signature(request, body_bytes)
-
-    async for gate, client in _open_gate(user, request):
-        try:
-            result = await client.resume()
-        except Exception as exc:
-            _log_decision(
-                user.user_id,
-                "resume",
-                {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-                "error",
-                {"error": str(exc)},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-            )
-
-    _log_decision(
-        user.user_id,
-        "resume",
-        {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-        "ok",
-        {"result": result},
-    )
-    return {"result": result, "stid": sig_info["stid"]}
-
-
-@router.get("/status")
-async def status(
-    request: Request, user: models.User = Depends(get_current_user)
-):
-    """Counters versus caps, kill state, and pending approvals (raw CLI text)."""
-    body_bytes = b""
-    sig_info = _verify_frontend_signature(request, body_bytes)
-
-    async for gate, client in _open_gate(user, request):
-        try:
-            result = await client.status()
-        except Exception as exc:
-            _log_decision(
-                user.user_id,
-                "status",
-                {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-                "error",
-                {"error": str(exc)},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-            )
-
-    _log_decision(
-        user.user_id,
-        "status",
-        {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-        "ok",
-        {},
-    )
-    return {"status": result, "stid": sig_info["stid"]}
-
-
-@router.get("/approvals")
-async def approvals(
-    request: Request, user: models.User = Depends(get_current_user)
-):
-    """Pending approvals awaiting human release (raw CLI text)."""
-    body_bytes = b""
-    sig_info = _verify_frontend_signature(request, body_bytes)
-
-    async for gate, client in _open_gate(user, request):
-        try:
-            result = await client.pending_approvals()
-        except Exception as exc:
-            _log_decision(
-                user.user_id,
-                "approvals",
-                {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-                "error",
-                {"error": str(exc)},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-            )
-
-    _log_decision(
-        user.user_id,
-        "approvals",
-        {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-        "ok",
-        {},
-    )
-    return {"approvals": result, "stid": sig_info["stid"]}
-
-
-@router.get("/audit")
-async def audit(
-    request: Request, user: models.User = Depends(get_current_user)
-):
-    """Audit entries okgate has appended, oldest first."""
-    body_bytes = b""
-    sig_info = _verify_frontend_signature(request, body_bytes)
-
-    async for gate, client in _open_gate(user, request):
-        try:
-            entries = await client.read_audit()
-        except Exception as exc:
-            _log_decision(
-                user.user_id,
-                "audit_read",
-                {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-                "error",
-                {"error": str(exc)},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-            )
-
-    _log_decision(
-        user.user_id,
-        "audit_read",
-        {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-        "ok",
-        {"entry_count": len(entries)},
-    )
-    return {"audit": entries, "stid": sig_info["stid"]}
-
-
-@router.get("/audit/verify")
-async def audit_verify(
-    request: Request, user: models.User = Depends(get_current_user)
-):
-    """Verify the hash-chained integrity of both okgate audit and backend decision log."""
-    body_bytes = b""
-    sig_info = _verify_frontend_signature(request, body_bytes)
-
-    async for gate, client in _open_gate(user, request):
-        try:
-            result = await client.verify_audit()
-        except Exception as exc:
-            _log_decision(
-                user.user_id,
-                "audit_verify",
-                {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-                "error",
-                {"error": str(exc)},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-            )
-
-    ledger_ok = decision_ledger.verify_chain() if decision_ledger else False
-    _log_decision(
-        user.user_id,
-        "audit_verify",
-        {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-        "ok",
-        {"okgate": okgate_result, "ledger": ledger_ok},
-    )
-    return {
-        "okgate": okgate_result,
-        "ledger": ledger_ok,
-        "stid": sig_info["stid"],
-    }
-
-
-@router.post("/transfer/prepare")
-async def transfer_prepare(
-    request: Request,
-    payload: SchemaTransferPrepare,
-    user: models.User = Depends(get_current_user),
-):
-    """Phase 1 of a transfer: price + reserve an intent (may need confirmation/MFA).
-
-    Layer 1: Pydantic schema validation rejects invalid amounts/currencies.
-    Layer 2: canonicalize + backend signing before okgate.
-    Layer 3: Idempotency key prevents double-execution on retries.
-    """
-    body_bytes = await request.body()
-    sig_info = _verify_frontend_signature(request, body_bytes)
-
-    # Check idempotency key - return cached response if duplicate request
-    idempotency_key = request.headers.get("Idempotency-Key")
-    if idempotency_key:
-        cached = _check_idempotency(idempotency_key)
-        if cached is not None:
-            return cached
-
-    # Schema validation (Layer 1)
-    try:
-        schema_req = SchemaTransferPrepare(
-            debtor_account_id=payload.debtor_account_id,
-            creditor=payload.creditor,
-            amount=payload.amount,
-            currency=payload.currency,
-            rail=payload.rail,
-            description=payload.description,
-        )
-    except ValidationError as ve:
-        _log_decision(
-            user.user_id,
-            "transfer_prepare",
-            {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-            "blocked",
-            {"reason": f"schema_validation_failed: {ve.errors()}", "stid": sig_info["stid"]},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Schema validation failed: {ve.errors()}",
-        )
-
-    canonical = canonicalize(
-        {
-            "debtor_account_id": schema_req.debtor_account_id,
-            "creditor": schema_req.creditor,
-            "amount": schema_req.amount,
-            "currency": schema_req.currency,
-            "rail": schema_req.rail,
-            "description": schema_req.description,
-        }
-    )
-    args_hash = hash_payload(canonical)
-
-    async for gate, client in _open_gate(user, request):
-        try:
-            outcome = await gate.transfer(
-                debtor_account_id=payload.debtor_account_id,
-                creditor=payload.creditor,
-                amount=payload.amount,
-                currency=payload.currency,
-                rail=payload.rail,
-                description=payload.description,
-                confirmed=payload.confirmed,
-                mfa_challenge_id=payload.mfa_challenge_id,
-                mfa_code=payload.mfa_code,
-            )
-        except Exception as exc:
-            _log_decision(
-                user.user_id,
-                "transfer_prepare",
-                {"client_id": sig_info["client_id"], "stid": sig_info["stid"]},
-                "error",
-                {"error": str(exc)},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-            )
-        finally:
-            await client.close()
-
-    # Backend re-signs the canonical payload for the bank/okgate upstream
-    signing_key = _get_signing_key(request)
-    backend_sig = None
-    if signing_key is not None:
-        backend_sig = sign_bytes(signing_key, canonical_args.encode("utf-8"))
-
-    _log_decision(
-        user.user_id,
         "transfer_prepare",
         {
             "debtor_account_id": payload.debtor_account_id,
@@ -1726,7 +1796,7 @@ async def transfer_prepare(
 async def transfer_execute_approve(
     request: Request,
     intent_id: str,
-    payload: SchemaTransferExecuteApprove,
+    payload: TransferExecuteApproveRequest,
     user: models.User = Depends(get_current_user),
 ):
     """Human approves a held execute-transfer, then re-executes it."""
@@ -1734,7 +1804,7 @@ async def transfer_execute_approve(
     sig_info = _verify_frontend_signature(request, body_bytes)
 
     try:
-        SchemaTransferExecuteApprove(approval_id=payload.approval_id)
+        TransferExecuteApproveRequest(approval_id=payload.approval_id)
     except ValidationError as ve:
         _log_decision(
             user.user_id,
