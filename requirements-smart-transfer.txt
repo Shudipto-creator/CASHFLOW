@@ -1,0 +1,29 @@
+# Packages used by Scenario 1 — Smart Transfer (LLM banking agent).
+#
+# The smart-transfer agent and its demo need two pieces of the project:
+#   - the Zero-Trust gate + mock bank   (runs in banking-agent/.venv)
+#   - the RAG + HTTP endpoint           (the app venv)
+#
+# NOTE: fastapi and fastmcp cannot share one venv (a starlette version conflict),
+# so the gate packages live in banking-agent/.venv and the app packages in the
+# main venv. Install accordingly:
+
+# --- banking-agent/.venv (gate + mock bank + RAG) ---
+bank2ai==0.6.1          # standardized bank2ai MCP tool surface / mock bank
+fastmcp==4.1.3          # MCP client transport for the okgate proxy
+chromadb==1.5.9         # RAG index over the banking-operations catalog
+httpx==0.28.1           # HTTP client (Ollama LLM path)
+cryptography==50.0.2    # signing / transport security
+
+# --- main venv (REST endpoint + app stack) ---
+fastapi==0.115.6        # the agent chat endpoint
+uvicorn                 # ASGI server
+pydantic                # request/response models
+python-dotenv           # configuration
+pydantic-settings       # settings loading
+
+# --- optional (real LLM selector / Titan embeddings) ---
+boto3                   # AWS Bedrock Nova LLM + Titan embeddings
+
+# --- runtime (not pip) ---
+# Node.js + npm/npx        -> okgate proxy (@agentwares/agentguard)

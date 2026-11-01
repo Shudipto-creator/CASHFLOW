@@ -11,7 +11,18 @@ from app.middleware.sandbox import (
     log_startup_sandbox_state,
     sandbox_inspection_middleware,
 )
-from app.routers import auth, documents, analysis, ask_cfo, dashboard, settings as settings_router, billflow, portfolio, banking
+from app.routers import (
+    auth,
+    documents,
+    analysis,
+    ask_cfo,
+    dashboard,
+    settings as settings_router,
+    billflow,
+    portfolio,
+    banking,
+    banking_agent,
+)
 from app.services.llm_factory import get_embedding_client, get_llm_client
 from app.services.mode_service import get_processing_mode
 from app.services.embeddings import VectorStore
@@ -63,6 +74,7 @@ app.include_router(settings_router.router)
 app.include_router(billflow.router)
 app.include_router(portfolio.router)
 app.include_router(banking.router)
+app.include_router(banking_agent.router)
 
 
 # Signing key is stored on app.state.signing_private_key at startup.
