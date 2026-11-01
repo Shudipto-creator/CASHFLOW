@@ -227,3 +227,6 @@ __marimo__/
 # NEVER commit these — the passphrase is injected via environment variables.
 app/secrets/
 banking-agent/secrets/
+
+# Generated working policy for the LLM banking agent (see app/services/llm_banking_agent.py)
+banking-agent/okgate.work.yaml
