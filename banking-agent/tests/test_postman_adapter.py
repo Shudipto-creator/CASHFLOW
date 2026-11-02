@@ -8,8 +8,8 @@ The fixtures mirror the demo's *verified* contract, read from its own
 * there is **no transfers route** — a money movement is
   ``POST /api/v1/transactions`` ("Post an atomic transfer or deposit") with
   required ``fromAccountId``/``toAccountId``/``amount``/``currency``;
-* every monetary value is a **non-negative integer in minor units**, and the
-  currency enum is COSMIC_COINS / GALAXY_GOLD / MOON_BUCKS (no CNY);
+* every monetary value is a **non-negative integer in whole sandbox units**, and
+  the currency enum is COSMIC_COINS / GALAXY_GOLD / MOON_BUCKS (no CNY);
 * errors use the ``{error: {name, message}}`` envelope, and the 201 body wraps the
   transaction in ``{transaction: ...}`` — the stub replays both shapes.
 
@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -39,11 +40,12 @@ from banking_agent.bank.postman_adapter import (
     from_minor_units,
     to_minor_units,
 )
+from banking_agent.config import get_postman_settings
 
-DEBTOR = "acct-001"
-RECIPIENT = "acct-002"
+DEBTOR = "1"
+RECIPIENT = "2"
 CREDITOR = {
-    "name": "李娜",
+    "name": "Gary Galaxy",
     "accountIdentifier": {
         "type": "accountNumber",
         "accountNumber": RECIPIENT,
@@ -51,33 +53,33 @@ CREDITOR = {
     },
 }
 
-# Demo-shaped rows (minor units, its own field names) — not bank2ai rows.
+# Demo-shaped rows (whole sandbox units, its own field names) — not bank2ai rows.
 _DEMO_ACCOUNTS = [
     {
-        "accountId": DEBTOR,
-        "owner": "cust-001",
-        "accountType": "PREMIUM",
-        "createdAt": "2026-01-04",
-        "balance": 12_845_000,  # 128,450.00 in minor units
-        "currency": "COSMIC_COINS",
-        "status": "ACTIVE",
-    },
-    {
-        "accountId": RECIPIENT,
-        "owner": "cust-002",
+        "accountId": "1",
+        "owner": "Nova Newman",
         "accountType": "STANDARD",
-        "createdAt": "2026-02-11",
-        "balance": 5_000_00,
+        "createdAt": "2026-01-04",
+        "balance": 6_150,
         "currency": "COSMIC_COINS",
         "status": "ACTIVE",
     },
     {
-        "accountId": "acct-003",
-        "owner": "cust-001",
+        "accountId": "3",
+        "owner": "Nova Newman",
         "accountType": "BUSINESS",
-        "createdAt": "2026-03-02",
-        "balance": 0,
+        "createdAt": "2026-02-11",
+        "balance": 2_500,
         "currency": "GALAXY_GOLD",
+        "status": "ACTIVE",
+    },
+    {
+        "accountId": "6",
+        "owner": "Nova Newman",
+        "accountType": "PREMIUM",
+        "createdAt": "2026-03-02",
+        "balance": 1_800,
+        "currency": "MOON_BUCKS",
         "status": "ACTIVE",
     },
 ]
@@ -86,10 +88,10 @@ _DEMO_TRANSACTIONS = [
     {
         "transactionId": "TX-1042",
         "createdAt": "2026-10-30T09:15:00Z",
-        "amount": 6_800,  # outflow of 68.00, stored unsigned
+        "amount": 68,
         "currency": "COSMIC_COINS",
         "fromAccountId": DEBTOR,
-        "toAccountId": "merchant-starbucks",
+        "toAccountId": "merchant-1",
         "status": "POSTED",
         "description": "星巴克",
         "beneficiaryName": "Starbucks",
@@ -100,9 +102,9 @@ _DEMO_TRANSACTIONS = [
     {
         "transactionId": "TX-1043",
         "createdAt": "2026-10-28T11:00:00Z",
-        "amount": 2_400_00,
+        "amount": 2_400,
         "currency": "COSMIC_COINS",
-        "fromAccountId": "payroll",
+        "fromAccountId": "employer-1",
         "toAccountId": DEBTOR,
         "status": "POSTED",
         "description": None,
@@ -110,6 +112,31 @@ _DEMO_TRANSACTIONS = [
         "channel": "API",
         "deviceTrusted": True,
         "location": None,
+    },
+]
+
+_DEMO_BENEFICIARIES = [
+    {
+        "beneficiaryId": "beneficiary-1",
+        "name": "Gary Galaxy",
+        "accountId": RECIPIENT,
+        "status": "TRUSTED",
+    },
+    {
+        "beneficiaryId": "beneficiary-2",
+        "name": "Europa Freight Ltd",
+        "status": "PENDING",
+    },
+    {
+        "beneficiaryId": "beneficiary-3",
+        "name": "Lunar Utilities",
+        "status": "TRUSTED",
+    },
+    {
+        "beneficiaryId": "beneficiary-4",
+        "name": "Old Mars Rentals",
+        "accountId": "8",
+        "status": "INACTIVE",
     },
 ]
 
@@ -128,7 +155,7 @@ _ALLOWED_BODY_KEYS = {
 _REQUIRED_BODY_KEYS = {"fromAccountId", "toAccountId", "amount", "currency"}
 
 
-def _demo_transport(*, recorded=None, fail_with=None, api_key="1234"):
+def _demo_transport(*, recorded=None, fail_with=None, api_key="1234", beneficiaries=None):
     """Replay the demo's routing table and request validation in-process."""
 
     def _bad_request(message: str) -> httpx.Response:
@@ -150,6 +177,9 @@ def _demo_transport(*, recorded=None, fail_with=None, api_key="1234"):
         path = request.url.path
         if path == "/api/v1/accounts":
             return httpx.Response(200, json={"accounts": _DEMO_ACCOUNTS, "page": {}})
+        if path == "/api/v1/beneficiaries":
+            rows = _DEMO_BENEFICIARIES if beneficiaries is None else beneficiaries
+            return httpx.Response(200, json={"beneficiaries": rows, "page": {}})
         if path == "/api/v1/transactions" and request.method == "GET":
             return httpx.Response(200, json={"transactions": _DEMO_TRANSACTIONS, "page": {}})
         if path == "/api/v1/transactions" and request.method == "POST":
@@ -166,7 +196,8 @@ def _demo_transport(*, recorded=None, fail_with=None, api_key="1234"):
             if body["currency"] not in {"COSMIC_COINS", "GALAXY_GOLD", "MOON_BUCKS"}:
                 return _bad_request("currency not in enum")
             if body["toAccountId"] not in {a["accountId"] for a in _DEMO_ACCOUNTS}:
-                return _bad_request("unknown toAccountId")
+                if body["toAccountId"] != RECIPIENT:
+                    return _bad_request("unknown toAccountId")
             posted = {
                 "transactionId": "TX-NEW-1",
                 "createdAt": "2026-11-01T10:00:00Z",
@@ -198,7 +229,15 @@ async def client():
 
 @pytest.fixture
 async def backend():
-    b = PostmanBankBackend(client=PostmanBankClient(transport=_demo_transport()))
+    settings = replace(
+        get_postman_settings(),
+        read_only=False,
+        allow_currency_alias=False,
+        amount_scale=1,
+    )
+    b = PostmanBankBackend(
+        client=PostmanBankClient(settings=settings, transport=_demo_transport())
+    )
     yield b
     await b.aclose()
 
@@ -227,7 +266,8 @@ async def test_execute_transfer_sends_the_demos_required_body():
         recorded_requests.append(request)
         return httpx.Response(201, json={"transaction": {"transactionId": "TX-NEW-1"}})
 
-    client = PostmanBankClient(transport=httpx.MockTransport(spy))
+    settings = replace(get_postman_settings(), read_only=False, amount_scale=1)
+    client = PostmanBankClient(settings=settings, transport=httpx.MockTransport(spy))
     try:
         result = await client.execute_transfer(
             250.0, RECIPIENT, currency="COSMIC_COINS", from_account=DEBTOR
@@ -243,16 +283,19 @@ async def test_execute_transfer_sends_the_demos_required_body():
     assert set(body) == _REQUIRED_BODY_KEYS
     assert body["fromAccountId"] == DEBTOR
     assert body["toAccountId"] == RECIPIENT
-    # Major unit in, minor unit on the wire.
-    assert body["amount"] == 25000
+    # One whole sandbox token is one integer unit on the wire.
+    assert body["amount"] == 250
     assert isinstance(body["amount"], int)
 
 
 def test_minor_unit_conversion_is_round_tripped():
-    assert to_minor_units(126.4) == 12640
-    assert to_minor_units(0.01) == 1
-    assert from_minor_units(12640) == 126.4
-    assert from_minor_units(2_400_00) == 2400.0
+    assert to_minor_units(126) == 126
+    assert from_minor_units(126) == 126.0
+    assert from_minor_units(2_400) == 2400.0
+    assert to_minor_units(126.4, scale=100) == 12640
+    assert from_minor_units(12640, scale=100) == 126.4
+    with pytest.raises(ValueError, match="exactly representable"):
+        to_minor_units(126.4)
 
 
 # -- failsafe (spec section 3) ----------------------------------------------
@@ -285,7 +328,8 @@ async def test_wrong_api_key_is_not_reported_as_service_down():
 
 
 async def test_rejected_body_surfaces_the_demos_error():
-    client = PostmanBankClient(transport=_demo_transport())
+    settings = replace(get_postman_settings(), read_only=False, amount_scale=1)
+    client = PostmanBankClient(settings=settings, transport=_demo_transport())
     # No fromAccountId -> the real server 400s; we must report that, not swallow it.
     result = await client.execute_transfer(10.0, RECIPIENT, currency="COSMIC_COINS")
     assert result.status == "error"
@@ -306,8 +350,8 @@ async def test_bank2ai_accounts_map_to_the_standard_model(backend):
     # shown as a 3-letter display code. The wire value (COSMIC_COINS) lives only
     # in the API body, never in the agent-facing model.
     assert debtor.currency == "COS"
-    # minor units on the wire -> major units for the agent and the tiers
-    assert debtor.availableBalance == 128450.0
+    # The sandbox currencies are exponent-zero whole-token units.
+    assert debtor.availableBalance == 6150.0
 
 
 async def test_transactions_are_signed_by_direction(backend):
@@ -317,6 +361,12 @@ async def test_transactions_are_signed_by_direction(backend):
     assert by_id["TX-1042"].amount == -68.0  # we are the fromAccountId
     assert by_id["TX-1043"].amount == 2400.0  # we are the toAccountId
     assert by_id["TX-1042"].accountId == DEBTOR
+
+
+async def test_get_recipients_returns_only_trusted_linked_accounts(backend):
+    recipients = await backend.get_recipients(name="")
+    assert [recipient.name for recipient in recipients.items] == ["Gary Galaxy"]
+    assert recipients.items[0].accountIdentifier.accountNumber == RECIPIENT
 
 
 async def test_prepare_then_execute_completes_the_two_phase_flow(backend):
@@ -351,11 +401,15 @@ async def test_prepare_refuses_a_currency_the_sandbox_does_not_offer(backend):
 
 async def test_prepare_resolves_a_cny_amount_when_aliasing_is_opted_in(monkeypatch):
     monkeypatch.setenv("POSTMAN_DEMO_ALLOW_CURRENCY_ALIAS", "1")
-    from banking_agent.config import get_postman_settings
+    monkeypatch.setenv("POSTMAN_DEMO_READ_ONLY", "0")
 
     assert get_postman_settings().allow_currency_alias is True
 
-    backend = PostmanBankBackend(client=PostmanBankClient(transport=_demo_transport()))
+    backend = PostmanBankBackend(
+        client=PostmanBankClient(
+            settings=get_postman_settings(), transport=_demo_transport()
+        )
+    )
     try:
         prepared = await backend.prepare_transfer(
             debtor_account_id=DEBTOR,
@@ -420,9 +474,94 @@ async def test_prepare_rejects_a_recipient_the_sandbox_cannot_pay(backend):
     assert prepared.code == "unknown_recipient"
 
 
+async def test_prepare_rejects_untrusted_beneficiary_even_with_linked_account(backend):
+    creditor = {
+        "name": "Europa Freight Ltd",
+        "accountIdentifier": {
+            "type": "accountNumber",
+            "accountNumber": RECIPIENT,
+            "country": "CN",
+        },
+    }
+    prepared = await backend.prepare_transfer(
+        debtor_account_id=DEBTOR,
+        creditor=creditor,
+        amount=50.0,
+        currency="COSMIC_COINS",
+        rail="domestic-IS",
+    )
+    assert prepared.code == "unknown_recipient"
+
+
+async def test_prepare_rejects_recipient_account_mismatch(backend):
+    creditor = {
+        **CREDITOR,
+        "accountIdentifier": {
+            "type": "accountNumber",
+            "accountNumber": "999",
+            "country": "CN",
+        },
+    }
+    prepared = await backend.prepare_transfer(
+        debtor_account_id=DEBTOR,
+        creditor=creditor,
+        amount=50.0,
+        currency="COSMIC_COINS",
+        rail="domestic-IS",
+    )
+    assert prepared.code == "recipient_identifier_mismatch"
+
+
+async def test_prepare_rejects_ambiguous_trusted_recipient():
+    duplicate_beneficiaries = [
+        _DEMO_BENEFICIARIES[0],
+        {
+            "beneficiaryId": "beneficiary-5",
+            "name": "Gary Galaxy",
+            "accountId": "5",
+            "status": "TRUSTED",
+        },
+    ]
+    settings = replace(
+        get_postman_settings(),
+        read_only=False,
+        allow_currency_alias=False,
+        amount_scale=1,
+    )
+    backend = PostmanBankBackend(
+        client=PostmanBankClient(
+            settings=settings,
+            transport=_demo_transport(beneficiaries=duplicate_beneficiaries),
+        )
+    )
+    try:
+        prepared = await backend.prepare_transfer(
+            debtor_account_id=DEBTOR,
+            creditor=CREDITOR,
+            amount=50.0,
+            currency="COSMIC_COINS",
+            rail="domestic-IS",
+        )
+        assert prepared.code == "unknown_recipient"
+        assert "found 2" in prepared.content
+    finally:
+        await backend.aclose()
+
+
+async def test_prepare_rejects_fractional_sandbox_amount(backend):
+    prepared = await backend.prepare_transfer(
+        debtor_account_id=DEBTOR,
+        creditor=CREDITOR,
+        amount=50.5,
+        currency="COSMIC_COINS",
+        rail="domestic-IS",
+    )
+    assert prepared.code == "invalid_amount"
+
+
 async def test_execute_rejects_an_unknown_intent(backend):
     executed = await backend.execute_transfer(transfer_intent_id="intent_never_minted")
-    assert executed.code == "intent_not_found"
+    assert executed.code == "intent_invalid_or_expired"
 
 
 async def test_prepare_prices_without_moving_money(backend):
@@ -435,7 +574,12 @@ async def test_prepare_prices_without_moving_money(backend):
     is the regression guard for that ordering.
     """
     hits: list[tuple[str, str]] = []
-    backend.client = PostmanBankClient(transport=_demo_transport(recorded=hits))
+    settings = replace(
+        get_postman_settings(), read_only=False, allow_currency_alias=False, amount_scale=1
+    )
+    backend.client = PostmanBankClient(
+        settings=settings, transport=_demo_transport(recorded=hits)
+    )
 
     await backend.prepare_transfer(
         debtor_account_id=DEBTOR,
@@ -446,6 +590,18 @@ async def test_prepare_prices_without_moving_money(backend):
     )
     assert ("POST", "/api/v1/transactions") not in hits
     assert any(p == "/api/v1/accounts" for _, p in hits)
+    assert any(p == "/api/v1/beneficiaries" for _, p in hits)
+
+
+async def test_read_only_default_blocks_transfer_posts():
+    hits: list[tuple[str, str]] = []
+    client = PostmanBankClient(transport=_demo_transport(recorded=hits))
+    result = await client.execute_transfer(
+        10, RECIPIENT, currency="COSMIC_COINS", from_account=DEBTOR
+    )
+    assert result.status == "error"
+    assert "read-only" in result.message
+    assert hits == []
 
 
 async def test_unreachable_demo_raises_instead_of_returning_empty(backend):
@@ -460,7 +616,7 @@ async def test_unreachable_demo_raises_instead_of_returning_empty(backend):
 
 
 async def test_unsupported_reads_fall_back_to_the_ledger(backend):
-    """Categories/recipients are not modelled by the demo.
+    """Categories are not modelled by the demo.
 
     The MCP tool surface must not lose tools when the backend changes, otherwise
     okgate's `get-*` read class and the frontend's account picker both change

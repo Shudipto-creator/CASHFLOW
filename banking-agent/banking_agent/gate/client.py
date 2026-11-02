@@ -60,7 +60,17 @@ def _child_env() -> dict[str, str]:
     okgate.yaml, so the proxy's own env cannot select the bank implementation
     either way. See ``banking_agent.config.UPSTREAM_ENV_FILE`` for the switch.
     """
-    scripts = os.path.dirname(os.path.abspath(sys.executable))
+    # CASHFLOW runs FastAPI and the bank adapter in separate virtual
+    # environments. If the dedicated banking-agent environment exists, the
+    # upstream must use it so imports such as `bank2ai` resolve even when the
+    # API process itself is running from the project environment.
+    agent_root = Path(__file__).resolve().parents[2]
+    venv_bin = agent_root / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+    python_name = "python.exe" if os.name == "nt" else "python"
+    if (venv_bin / python_name).is_file():
+        scripts = str(venv_bin)
+    else:
+        scripts = os.path.dirname(os.path.abspath(sys.executable))
     existing = os.environ.get("PATH", "")
     return {"PATH": os.pathsep.join([scripts, existing]) if existing else scripts}
 

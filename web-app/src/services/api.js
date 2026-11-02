@@ -21,7 +21,9 @@ async function request(path, body, token) {
 export const login = (email, password) => request('/api/auth/login', { email, password })
 // The existing backend stores the display name in its legacy company_name field.
 export const register = ({ name, ...userData }) => request('/api/auth/register', { ...userData, company_name: name })
-export const chatWithCfoAi = (message, token) => request('/api/banking/agent/chat', { message }, token)
+export const chatWithCfoAi = (message, token, options = {}) => request('/api/banking/agent/chat', { message, ...options }, token)
+export const approveSandboxTransfer = (intent_id, approval_id, token) =>
+  request('/api/banking/agent/transfer/approve', { intent_id, approval_id }, token)
 
 export async function getDemoBankData(token) {
   const response = await fetch(`${API_BASE_URL}/api/banking/demo-data`, {

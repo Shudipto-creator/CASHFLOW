@@ -38,7 +38,12 @@ export default function App() {
   if (!isAuthenticated) return <AuthPage />
   return <main className={`app-shell ${active === 'cfo-ai' ? 'chat-mode' : ''}`}>
     <AppHeader onHome={() => setActive('home')} onNotify={() => notify('You’re all caught up.')} />
-    {active === 'contacts' ? <ContactsPage onNotice={notify} /> : active === 'cfo-ai' ? <CfoChatPage onNotice={notify} /> : active === 'me' ? <MePage onNotice={notify} onNavigate={navigate} user={user} onSignOut={signOut} /> : active === 'parameters' ? <ParametersPage onNotice={notify} theme={theme} onThemeChange={setTheme} onBack={()=>setActive('me')} /> : active === 'activity' ? <ActivityPage onNotice={notify} /> : <HomePage onNavigate={navigate} onNotice={notify} />}
+    <div className="screen-panel" hidden={active !== 'home'}><HomePage onNavigate={navigate} onNotice={notify} /></div>
+    <div className="screen-panel" hidden={active !== 'contacts'}><ContactsPage onNotice={notify} /></div>
+    <div className="screen-panel" hidden={active !== 'cfo-ai'}><CfoChatPage isActive={active === 'cfo-ai'} onNotice={notify} /></div>
+    <div className="screen-panel" hidden={active !== 'activity'}><ActivityPage onNotice={notify} /></div>
+    <div className="screen-panel" hidden={active !== 'me'}><MePage onNotice={notify} onNavigate={navigate} user={user} onSignOut={signOut} /></div>
+    <div className="screen-panel" hidden={active !== 'parameters'}><ParametersPage onNotice={notify} theme={theme} onThemeChange={setTheme} onBack={()=>setActive('me')} /></div>
     <BottomNavigation active={active === 'parameters' ? 'me' : active} onSelect={navigate} onNotify={() => notify('You’re all caught up.')} />
     <Toast message={notice} />
   </main>

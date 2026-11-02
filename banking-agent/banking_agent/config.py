@@ -90,10 +90,13 @@ _DEFAULTS = {
     # deposit"), so the write path defaults there, not to /transfers.
     "transfer_path": "/api/v1/transactions",
     # The demo's only currencies are COSMIC_COINS / GALAXY_GOLD / MOON_BUCKS and
-    # every monetary field is a non-negative integer in MINOR UNITS. There is no
-    # CNY in the sandbox, so amounts must be converted at this boundary — see the
-    # unit invariant in bank/postman_adapter.py.
+    # every monetary field is a non-negative integer. Their exponent is zero,
+    # so one API amount is one whole demo token. There is no CNY in the sandbox.
     "currency": "COSMIC_COINS",
+    # Amount scale for legacy minor-unit APIs. This Banking API uses exponent 0.
+    "amount_scale": 1,
+    # FINN is wired read-only until demo-token transfer amounts are explicitly enabled.
+    "read_only": True,
     # Optional demo run isolation header (X-Demo-Run-Id); unset uses the demo's
     # DEFAULT_RUN_ID.
     "run_id": None,
@@ -110,8 +113,10 @@ class PostmanDemoSettings:
     timeout_s: float
     transfer_path: str
     currency: str
+    amount_scale: int
     run_id: Optional[str]
     allow_currency_alias: bool
+    read_only: bool
 
     @property
     def accounts_url(self) -> str:
@@ -120,6 +125,10 @@ class PostmanDemoSettings:
     @property
     def transactions_url(self) -> str:
         return f"{self.base_url}{self.api_prefix}/transactions"
+
+    @property
+    def beneficiaries_url(self) -> str:
+        return f"{self.base_url}{self.api_prefix}/beneficiaries"
 
     @property
     def transfer_url(self) -> str:
@@ -179,6 +188,7 @@ def get_postman_settings(
             overrides,
         ),
         currency=_env("POSTMAN_DEMO_CURRENCY", _DEFAULTS["currency"], overrides),
+        amount_scale=max(1, int(_env("POSTMAN_DEMO_AMOUNT_SCALE", str(_DEFAULTS["amount_scale"]), overrides))),
         run_id=_get("POSTMAN_DEMO_RUN_ID", overrides),
         # The sandbox only speaks COSMIC_COINS/GALAXY_GOLD/MOON_BUCKS, while the
         # agent and the ¥ thresholds are written in CNY. Off by default: silently
@@ -189,6 +199,7 @@ def get_postman_settings(
         allow_currency_alias=_env_bool(
             "POSTMAN_DEMO_ALLOW_CURRENCY_ALIAS", False, overrides
         ),
+        read_only=_env_bool("POSTMAN_DEMO_READ_ONLY", _DEFAULTS["read_only"], overrides),
     )
 
 

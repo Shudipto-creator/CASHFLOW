@@ -1,4 +1,4 @@
-const CACHE_NAME = 'finn-preview-v2'
+const CACHE_NAME = 'finn-preview-v3'
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/cashflow.svg']
 
 self.addEventListener('install', (event) => {

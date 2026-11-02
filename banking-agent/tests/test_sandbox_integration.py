@@ -21,13 +21,14 @@ from __future__ import annotations
 import importlib
 import logging
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
-from banking_agent.config import BankUpstreamMode, get_bank_upstream_settings
+from banking_agent.config import BankUpstreamMode, get_bank_upstream_settings, get_postman_settings
 from banking_agent.bank import server as bank_server
 from banking_agent.bank.postman_adapter import PostmanBankClient
 
@@ -38,16 +39,28 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+def _ignore_operator_files(monkeypatch, tmp_path):
+    from banking_agent import config as bank_config
+
+    monkeypatch.setattr(bank_config, "UPSTREAM_ENV_FILE", tmp_path / "missing.env")
+    monkeypatch.setattr(
+        bank_config, "LOCAL_UPSTREAM_ENV_FILE", tmp_path / "missing-local.env"
+    )
+
+
 # -- mode flag ---------------------------------------------------------------
 
 
-def test_mode_defaults_to_mock(monkeypatch):
+def test_mode_defaults_to_mock_without_operator_configuration(monkeypatch, tmp_path):
+    _ignore_operator_files(monkeypatch, tmp_path)
     monkeypatch.delenv("BANK_UPSTREAM_MODE", raising=False)
     assert get_bank_upstream_settings().mode is BankUpstreamMode.MOCK
 
 
-def test_mode_reads_postman_demo_from_env(monkeypatch):
+def test_mode_reads_postman_demo_from_env(monkeypatch, tmp_path):
+    _ignore_operator_files(monkeypatch, tmp_path)
     monkeypatch.setenv("BANK_UPSTREAM_MODE", "postman_demo")
+    monkeypatch.setenv("POSTMAN_DEMO_BASE_URL", "http://localhost:3000")
     settings = get_bank_upstream_settings()
     assert settings.mode is BankUpstreamMode.POSTMAN_DEMO
     # Verified against the demo's server.js: routers are mounted under /api/v1.
@@ -92,21 +105,23 @@ def test_environment_beats_the_operator_file(monkeypatch, tmp_path):
     assert get_bank_upstream_settings().mode is BankUpstreamMode.MOCK
 
 
-def test_shipped_operator_file_defaults_to_mock():
-    """The file in the repo must not silently switch anyone's bank."""
+def test_shipped_operator_file_does_not_enable_transfer_writes():
+    """The tracked operator config must leave sandbox transfers read-only."""
     from banking_agent.config import UPSTREAM_ENV_FILE
 
     if not UPSTREAM_ENV_FILE.exists():
         pytest.skip("no operator file in this checkout")
-    uncommented = [
-        line
+    configured_writable = any(
+        line.partition("=")[0].strip() == "POSTMAN_DEMO_READ_ONLY"
+        and line.partition("=")[2].strip().lower() in {"0", "false", "no", "off"}
         for line in UPSTREAM_ENV_FILE.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
-    assert uncommented == [], f"bank_upstream.env must ship fully commented: {uncommented}"
+        if line.strip() and not line.strip().startswith("#") and "=" in line
+    )
+    assert not configured_writable, "bank_upstream.env must not enable transfer writes"
 
 
-def test_build_bank_backend_selects_by_mode(monkeypatch):
+def test_build_bank_backend_selects_by_mode(monkeypatch, tmp_path):
+    _ignore_operator_files(monkeypatch, tmp_path)
     monkeypatch.delenv("BANK_UPSTREAM_MODE", raising=False)
     assert isinstance(bank_server.build_bank_backend(), bank_server.Ledger)
 
@@ -157,14 +172,14 @@ def _stub_transport(request: httpx.Request) -> httpx.Response:
                 "accounts": [
                     {
                         # Row-shaped exactly as the demo serves it — its own field
-                        # names, a minor-unit integer balance, a token currency and
+                        # names, a whole-token integer balance, a token currency and
                         # an ACTIVE status. None of it is bank2ai-shaped: the
                         # adapter owns the whole mapping.
-                        "accountId": "acct-001",
-                        "owner": "cust-001",
-                        "accountType": "PREMIUM",
+                        "accountId": "1",
+                        "owner": "Nova Newman",
+                        "accountType": "STANDARD",
                         "createdAt": "2026-01-04",
-                        "balance": 12_845_000,
+                        "balance": 6_150,
                         "currency": "COSMIC_COINS",
                         "status": "ACTIVE",
                     }
@@ -178,9 +193,9 @@ def _stub_transport(request: httpx.Request) -> httpx.Response:
                 "transactions": [
                     {
                         "transactionId": "TX-1042",
-                        "fromAccountId": "acct-001",
-                        "toAccountId": "acct-002",
-                        "amount": 6800,
+                        "fromAccountId": "1",
+                        "toAccountId": "merchant-1",
+                        "amount": 68,
                         "currency": "COSMIC_COINS",
                         "createdAt": "2026-03-01T09:00:00Z",
                         "description": "咖啡",
@@ -207,12 +222,15 @@ async def test_postman_mode_answers_through_the_bank2ai_models():
     from bank2ai import AccountList
 
     backend = PostmanBankBackend(
-        client=PostmanBankClient(transport=httpx.MockTransport(_stub_transport))
+        client=PostmanBankClient(
+            settings=replace(get_postman_settings(), amount_scale=1),
+            transport=httpx.MockTransport(_stub_transport),
+        )
     )
     accounts = await backend.get_accounts()
     assert isinstance(accounts, AccountList)
-    # minor units on the wire -> major units for the agent and the ¥ tiers
-    assert accounts.items[0].availableBalance == 128450.0
+    # Exponent-zero sandbox currency units are passed through to the gate.
+    assert accounts.items[0].availableBalance == 6150.0
     # bank2ai requires ^[A-Z]{3}$, so the token name is shown truncated
     assert accounts.items[0].currency == "COS"
 

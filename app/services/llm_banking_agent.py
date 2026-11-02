@@ -441,7 +441,6 @@ def _transfer_args(message: str) -> dict[str, Any]:
     args: dict[str, Any] = {
         "amount": amount,
         "currency": "CNY",
-        "debtor_account_id": "acc_cmb_001",
     }
     if name:
         args["creditor_name"] = name
@@ -592,17 +591,19 @@ class BankingExecutor:
         self.state_dir = state_dir
         self.subject = subject
         self.run_id = run_id
+        self._mfa = None
 
     def _mfa_verifier(self):
         from banking_agent.gate import SmsCodeMfa
 
-        delivered: dict[str, str] = {}
+        if self._mfa is not None:
+            return self._mfa
 
         def deliver(subject: str, challenge_id: str, code: str) -> None:
-            delivered[challenge_id] = code
             print(f"      [SMS to {subject}] verification code {code}")
 
-        return SmsCodeMfa(deliver=deliver), delivered
+        self._mfa = SmsCodeMfa(deliver=deliver)
+        return self._mfa
 
     def _npx_for_gate(self) -> Optional[str]:
         """Return an npx path the gate can spawn on Windows.
@@ -646,7 +647,7 @@ class BankingExecutor:
         )
         await client.open()
         try:
-            mfa, delivered = self._mfa_verifier()
+            mfa = self._mfa_verifier()
             gate = SecureBankGate(
                 client=client,
                 spend=DailySpendLedger(self.state_dir / "daily_spend.json"),
@@ -655,9 +656,64 @@ class BankingExecutor:
             )
 
             if op.id == "prepare-transfer":
+                accounts = await gate.call("get-accounts")
+                if not accounts.ok:
+                    return {"ok": False, "code": accounts.code or "accounts_unavailable", "message": accounts.message}
+                account_rows = _tool_items(accounts.value)
+                requested_source = args.get("debtor_account_id")
+                source = next((
+                    row for row in account_rows
+                    if str(row.get("id", row.get("accountId", ""))) == str(requested_source)
+                ), None) if requested_source else None
+                if requested_source and source is None:
+                    return {
+                        "ok": False, "code": "invalid_account",
+                        "message": "That source account is not available to this bank customer.",
+                    }
+                if source is None:
+                    source = next((row for row in account_rows
+                                   if str(row.get("product", "")).upper() == "STANDARD"), None)
+                if source is None and account_rows:
+                    source = account_rows[0]
+                if source is None:
+                    return {"ok": False, "code": "no_accounts", "message": "No source account is available."}
+                source_id = str(source.get("id", source.get("accountId", "")))
+
+                requested_creditor = args.get("creditor") or {}
+                recipient_name = (
+                    args.get("creditor_name") or args.get("name")
+                    or (requested_creditor.get("name") if isinstance(requested_creditor, dict) else None)
+                )
+                if not recipient_name:
+                    return {
+                        "ok": False, "code": "recipient_required",
+                        "message": "Tell me which saved recipient should receive the transfer.",
+                    }
+                recipient_result = await gate.call("get-recipients", {"name": str(recipient_name)})
+                recipients = _tool_items(recipient_result.value)
+                exact = [row for row in recipients if str(row.get("name", "")).strip().casefold() == str(recipient_name).strip().casefold()]
+                if not recipient_result.ok or len(exact) != 1:
+                    message = "I couldn't find one trusted saved recipient with that name."
+                    return {"ok": False, "code": "recipient_not_resolved", "message": message}
+                recipient = exact[0]
+                identifier = recipient.get("accountIdentifier") or {}
+                account_number = identifier.get("accountNumber") if isinstance(identifier, dict) else None
+                if not account_number:
+                    return {"ok": False, "code": "recipient_not_routable", "message": "That saved recipient has no sandbox account linked."}
+                creditor = {
+                    "name": recipient["name"],
+                    "accountIdentifier": {"type": "accountNumber", "accountNumber": str(account_number), "country": "CN"},
+                }
+                preview = {
+                    "source_account_id": source_id,
+                    "source_account_name": source.get("name") or source.get("product") or source_id,
+                    "recipient_name": recipient["name"],
+                    "amount": args.get("amount", 0),
+                    "currency": args.get("currency", "CNY"),
+                }
                 outcome = await gate.transfer(
-                    debtor_account_id=args.get("debtor_account_id", "acc_cmb_001"),
-                    creditor=args.get("creditor", _default_creditor(args)),
+                    debtor_account_id=source_id,
+                    creditor=creditor,
                     amount=args.get("amount", 0),
                     currency=args.get("currency", "CNY"),
                     rail=args.get("rail", "swift"),
@@ -666,10 +722,25 @@ class BankingExecutor:
                     mfa_challenge_id=mfa_challenge_id,
                     mfa_code=mfa_code,
                 )
-                return self._transfer_payload(outcome, delivered)
+                payload = self._transfer_payload(outcome)
+                payload["transfer_preview"] = preview
+                if outcome.ok and outcome.intent_id:
+                    # Request the policy approval now so the UI can show a
+                    # distinct final approval action. The signed intent survives
+                    # this short-lived MCP process and is revalidated at settle.
+                    approval = await gate.execute(outcome.intent_id)
+                    payload.update({
+                        "ok": approval.ok,
+                        "code": _code_of(approval),
+                        "needs_approval": approval.needs_approval,
+                        "approval_id": approval.approval_id,
+                        "approval_command": approval.approval_command,
+                        "message": approval.message,
+                    })
+                return payload
             if op.id == "execute-transfer":
                 outcome = await gate.execute(args.get("transfer_intent_id", ""))
-                return self._transfer_payload(outcome, delivered)
+                return self._transfer_payload(outcome)
 
             outcome = await gate.call(op.id, args or None, confirmed=confirmed)
             return {
@@ -684,7 +755,9 @@ class BankingExecutor:
             await client.close()
 
     @staticmethod
-    def _transfer_payload(outcome: Any, delivered: dict[str, str]) -> dict[str, Any]:
+    def _transfer_payload(outcome: Any) -> dict[str, Any]:
+        step = getattr(outcome, "prepared", None) or getattr(outcome, "executed", None)
+        details = getattr(step, "details", None) or {}
         return {
             "ok": outcome.ok,
             "stage": outcome.stage,
@@ -697,8 +770,27 @@ class BankingExecutor:
             "needs_confirmation": outcome.needs_confirmation,
             "needs_mfa": outcome.needs_mfa,
             "needs_approval": outcome.needs_approval,
-            "mfa_codes": delivered,
+            "mfa_challenge_id": details.get("challenge_id"),
         }
+
+    async def approve_transfer(self, intent_id: str, approval_id: str) -> dict[str, Any]:
+        from banking_agent.gate import DailySpendLedger, GateClient, SecureBankGate
+
+        client = GateClient(policy=self.policy, root=self.root, run_id=self.run_id, npx=self._npx_for_gate())
+        await client.open()
+        try:
+            release = await client.approve(approval_id)
+            gate = SecureBankGate(
+                client=client,
+                spend=DailySpendLedger(self.state_dir / "daily_spend.json"),
+                subject=self.subject,
+            )
+            outcome = await gate.execute(intent_id)
+            payload = self._transfer_payload(outcome)
+            payload["approval_release"] = release
+            return payload
+        finally:
+            await client.close()
 
 
 def _code_of(outcome: Any) -> Optional[str]:
@@ -706,18 +798,18 @@ def _code_of(outcome: Any) -> Optional[str]:
     return step.code if step and step.code else ("OK" if outcome.ok else None)
 
 
-def _default_creditor(args: dict[str, Any]) -> dict[str, Any]:
-    """Build a creditor from free-form args when the caller did not pass one."""
-    name = args.get("creditor_name") or args.get("name") or "李娜"
-    account = args.get("account_number") or "6225 8888 0000 1234"
-    return {
-        "name": name,
-        "accountIdentifier": {
-            "type": "accountNumber",
-            "accountNumber": account,
-            "country": args.get("country", "CN"),
-        },
-    }
+def _tool_items(value: Any) -> list[dict[str, Any]]:
+    """Normalize a structured MCP list response into dictionaries."""
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(exclude_none=True)
+    if isinstance(value, dict):
+        rows = value.get("items") or value.get("accounts") or value.get("recipients") or []
+    elif isinstance(value, list):
+        rows = value
+    else:
+        rows = []
+    return [row.model_dump(exclude_none=True) if hasattr(row, "model_dump") else row
+            for row in rows if isinstance(row, dict) or hasattr(row, "model_dump")]
 
 
 # ============================================================================

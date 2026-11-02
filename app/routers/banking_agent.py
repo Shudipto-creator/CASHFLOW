@@ -51,6 +51,11 @@ class AgentChatRequest(BaseModel):
     mfa_code: Optional[str] = None
 
 
+class AgentTransferApprovalRequest(BaseModel):
+    intent_id: str = Field(..., min_length=1)
+    approval_id: str = Field(..., min_length=1)
+
+
 class AgentChatResponse(BaseModel):
     implemented: bool
     code: str
@@ -65,6 +70,7 @@ class AgentChatResponse(BaseModel):
 
 #: Process-lifetime agent cache: one agent per processing mode.
 _AGENT_CACHE: dict[str, LLMBankingAgent] = {}
+_PENDING_TRANSFER_APPROVALS: dict[tuple[str, str], tuple[str, str]] = {}
 
 
 def _user_scope(user: models.User) -> str:
@@ -169,6 +175,17 @@ async def agent_chat(
         mfa_code=payload.mfa_code,
     )
 
+    if (
+        result.operation_id == "prepare-transfer"
+        and result.execution
+        and result.execution.get("needs_approval")
+        and result.execution.get("intent_id")
+        and result.execution.get("approval_id")
+    ):
+        _PENDING_TRANSFER_APPROVALS[
+            (str(user.user_id), result.execution["intent_id"])
+        ] = (result.execution["approval_id"], mode)
+
     return AgentChatResponse(
         implemented=result.implemented,
         code=result.code,
@@ -180,3 +197,32 @@ async def agent_chat(
         execution=result.execution,
         processing_mode=mode,
     )
+
+
+@router.post("/agent/transfer/approve")
+async def agent_transfer_approve(
+    payload: AgentTransferApprovalRequest,
+    user: models.User = Depends(get_current_user),
+):
+    """Release the human approval for a prepared sandbox transfer."""
+    key = (str(user.user_id), payload.intent_id)
+    pending = _PENDING_TRANSFER_APPROVALS.get(key)
+    if pending is None or pending[0] != payload.approval_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="That transfer approval was not found for your signed-in account.",
+        )
+
+    _, mode = pending
+    agent = _get_agent(mode, user)
+    if not agent.executor:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Transfer service unavailable.")
+    try:
+        result = await agent.executor.approve_transfer(payload.intent_id, payload.approval_id)
+    except Exception as exc:
+        logger.exception("Could not approve sandbox transfer for user %s", user.user_id)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="The transfer could not be completed.") from exc
+
+    if result.get("ok"):
+        _PENDING_TRANSFER_APPROVALS.pop(key, None)
+    return result

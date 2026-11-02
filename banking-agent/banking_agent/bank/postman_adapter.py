@@ -25,7 +25,12 @@ have to satisfy anyway.
 from __future__ import annotations
 
 import asyncio
+import base64
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
+import json
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -118,22 +123,34 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def to_minor_units(amount: float) -> int:
-    """Major units (what CASHFLOW and okgate price) -> the demo's minor-unit int.
+def to_minor_units(amount: float, scale: int = 1) -> int:
+    """Convert an amount exactly to the upstream's integer currency unit.
 
-    The demo validates `amount` as an integer >= 1 with balances non-negative, so
-    sending 250.0 would 400 and sending 25000 silently changes what "¥250" means.
-    Rounding, not truncation, so 126.4 -> 12640 exactly.
+    The sandbox currencies have exponent zero, so its default scale is one.
+    Legacy two-decimal APIs can explicitly configure a scale of 100. Reject
+    amounts that cannot be represented rather than silently rounding a transfer.
     """
-    return int(round(float(amount) * 100))
-
-
-def from_minor_units(value: Any) -> float:
-    """The inverse: demo minor units -> major units for bank2ai models."""
     try:
-        return round(float(value) / 100.0, 2)
-    except (TypeError, ValueError):
-        return 0.0
+        value = Decimal(str(amount))
+        scaled = value * scale
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError("Transfer amount must be a finite positive number.") from exc
+    if not value.is_finite() or value <= 0 or scaled != scaled.to_integral_value():
+        raise ValueError(
+            "Transfer amount must be positive and exactly representable in the sandbox currency."
+        )
+    return int(scaled)
+
+
+def from_minor_units(value: Any, scale: int = 1) -> float:
+    """Convert an upstream integer amount into the gate's amount unit."""
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError("Sandbox amount must be a finite number.") from exc
+    if not amount.is_finite():
+        raise ValueError("Sandbox amount must be a finite number.")
+    return round(float(amount / scale), 6)
 
 
 class PostmanBankClient:
@@ -270,6 +287,10 @@ class PostmanBankClient:
         params = {"limit": count} if count else None
         return await self._get(self.settings.transactions_url, params=params)
 
+    async def get_beneficiaries(self) -> ToolResult:
+        """GET the authenticated customer's saved recipients."""
+        return await self._get(self.settings.beneficiaries_url)
+
     async def execute_transfer(
         self,
         amount: float,
@@ -282,19 +303,20 @@ class PostmanBankClient:
     ) -> ToolResult:
         """POST the transfer to the demo API.
 
-        Contract verified from the demo's own openapi.yaml (CreateTransactionRequest):
+        Contract verified from the demo's own OpenAPI CreateTransactionRequest:
         `fromAccountId`, `toAccountId`, `amount`, `currency` are required, amounts
-        are *integers in minor units*, and `additionalProperties: false` means any
+        are *integers in the configured currency units*, and `additionalProperties: false` means any
         extra key is a 400 — hence the explicit field list instead of merging a
         caller dict into the body.
 
-        `amount` is accepted in major units (what the agent and the ¥ thresholds
-        speak) and converted here, so exactly one place in this file deals in
-        minor units. See the unit invariant in `PostmanBankBackend`.
+        `amount` is accepted in the gate's configured unit and converted using
+        the upstream amount scale.
 
         See `PostmanBankBackend.prepare_transfer` for why the MCP tool surface must
         *not* call this directly.
         """
+        if self.settings.read_only:
+            return ToolResult.error("Transfers are disabled for this read-only FINN demo connection.")
         to_id = (
             _pick(
                 to_account,
@@ -307,9 +329,13 @@ class PostmanBankClient:
             if isinstance(to_account, dict)
             else to_account
         )
+        try:
+            amount_units = to_minor_units(amount, self.settings.amount_scale)
+        except ValueError as exc:
+            return ToolResult.error("Transfer amount is invalid.", detail=str(exc))
         payload: dict[str, Any] = {
             "toAccountId": str(to_id),
-            "amount": to_minor_units(amount),
+            "amount": amount_units,
             "currency": currency or self.settings.currency,
         }
         if from_account:
@@ -344,7 +370,7 @@ def _to_bank2ai_currency(demo_currency: str) -> str:
 _STATUS_MAP = {"ACTIVE": "Enabled", "INACTIVE": "Blocked"}
 
 
-def _to_account_dict(row: dict) -> dict:
+def _to_account_dict(row: dict, *, amount_scale: int = 1) -> dict:
     """Map a demo Account onto bank2ai's Account.
 
     Field names are the demo's own (openapi.yaml `Account`: accountId, owner,
@@ -353,15 +379,15 @@ def _to_account_dict(row: dict) -> dict:
     * the demo has no `accountNumber`, but bank2ai requires it, so the demo's
       `accountId` is reused as the display identifier — the value a transfer must
       name as `toAccountId`;
-    * the demo has one `balance` (no available/held split) in minor units, so both
-      bank2ai balance fields carry the same major-unit number;
+    * the demo has one `balance` (no available/held split), so both bank2ai
+      balance fields carry the same amount in the configured unit scale;
     * currency and status go through the maps above to satisfy bank2ai's stricter
       enums, while `_api_currency` keeps the value the HTTP body needs;
     * `owner` becomes the account name, the only human-readable handle the demo
       offers.
     """
     account_id = str(_pick(row, "accountId", "account_id", "id", default="unknown"))
-    balance = from_minor_units(_pick(row, "balance", default=0))
+    balance = from_minor_units(_pick(row, "balance", default=0), amount_scale)
     status = _pick(row, "status")
     return {
         "id": account_id,
@@ -370,6 +396,8 @@ def _to_account_dict(row: dict) -> dict:
         "balance": balance,
         "availableBalance": balance,
         "name": _pick(row, "name", "label", "owner") or account_id,
+        # Preserve the sandbox's own account type for FINN's account summary UI.
+        "product": _pick(row, "product", "accountType"),
         # No bank2ai product taxonomy corresponds to STANDARD/PREMIUM/BUSINESS.
         "accountType": "Other",
         "status": _STATUS_MAP.get(str(status), "Enabled"),
@@ -382,7 +410,10 @@ def _api_currency_of(row: dict) -> str:
 
 
 def _to_transaction_dict(
-    row: dict, default_account_id: str = "unknown", our_account_ids: Optional[set] = None
+    row: dict,
+    default_account_id: str = "unknown",
+    our_account_ids: Optional[set] = None,
+    amount_scale: int = 1,
 ) -> dict:
     """Map a demo Transaction onto bank2ai's Transaction.
 
@@ -394,7 +425,7 @@ def _to_transaction_dict(
     our_ids = our_account_ids or set()
     from_id = str(_pick(row, "fromAccountId", "from_account_id", default=""))
     to_id = str(_pick(row, "toAccountId", "to_account_id", default=""))
-    magnitude = from_minor_units(_pick(row, "amount", default=0))
+    magnitude = from_minor_units(_pick(row, "amount", default=0), amount_scale)
     is_outflow = bool(our_ids) and from_id in our_ids and to_id not in our_ids
     account_id = to_id if (to_id in our_ids) else (from_id or default_account_id)
     return {
@@ -474,6 +505,35 @@ def _resolve_to_account_id(party: Any, rows: list[dict]) -> Optional[str]:
     return None
 
 
+def _signed_intent(settings: PostmanDemoSettings, data: dict[str, Any]) -> str:
+    """Pack transfer details into an authenticated, restart-safe intent token.
+
+    The MCP upstream is short-lived for each app request, so an in-memory intent
+    disappears between preparation and approval. A signed token lets a later
+    upstream instance recover the exact approved details without trusting
+    caller-edited account or amount fields.
+    """
+    payload = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+    encoded = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    signature = hmac.new(settings.api_key.encode(), encoded.encode(), hashlib.sha256).hexdigest()
+    return f"finn_{encoded}.{signature}"
+
+
+def _open_signed_intent(settings: PostmanDemoSettings, token: str) -> Optional[dict[str, Any]]:
+    try:
+        encoded, signature = token.removeprefix("finn_").rsplit(".", 1)
+        expected = hmac.new(settings.api_key.encode(), encoded.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return None
+        payload = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        data = json.loads(payload)
+        if not isinstance(data, dict) or int(data.get("expires", 0)) <= int(_utcnow().timestamp()):
+            return None
+        return data
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
 class PostmanBankBackend:
     """bank2ai-shaped bank backed by the Postman demo REST API.
 
@@ -550,14 +610,41 @@ class PostmanBankBackend:
         from bank2ai import Account, AccountList
 
         rows = await self._rows(await self.client.get_accounts(), "accounts")
-        return AccountList(items=[Account(**_to_account_dict(r)) for r in rows])
+        scale = self.client.settings.amount_scale
+        return AccountList(items=[Account(**_to_account_dict(r, amount_scale=scale)) for r in rows])
+
+    async def get_recipients(self, *, name: str):
+        """Return only trusted, in-sandbox beneficiaries for the current key."""
+        from bank2ai import AccountNumberIdentifier, Recipient, RecipientList
+
+        rows = await self._rows(await self.client.get_beneficiaries(), "beneficiaries")
+        needle = (name or "").strip().casefold()
+        matches = []
+        for row in rows:
+            account_id = _pick(row, "accountId", "account_id")
+            recipient_name = str(_pick(row, "name", default="")).strip()
+            if (
+                str(_pick(row, "status", default="")).upper() != "TRUSTED"
+                or not account_id
+                or (needle and needle not in recipient_name.casefold())
+            ):
+                continue
+            matches.append(Recipient(
+                id=str(_pick(row, "beneficiaryId", "id", default=account_id)),
+                name=recipient_name,
+                accountIdentifier=AccountNumberIdentifier(
+                    accountNumber=str(account_id), country="CN"
+                ),
+            ))
+        return RecipientList(items=matches)
 
     async def get_transactions(self, **filters: Any):
         from bank2ai import Transaction, TransactionList
 
         ours = await self._our_account_ids()
         rows = await self._rows(await self.client.get_transactions(), "transactions")
-        items = [Transaction(**_to_transaction_dict(r, our_account_ids=ours)) for r in rows]
+        scale = self.client.settings.amount_scale
+        items = [Transaction(**_to_transaction_dict(r, our_account_ids=ours, amount_scale=scale)) for r in rows]
         count = filters.get("count")
         if isinstance(count, int) and count >= 0:
             items = items[:count]
@@ -569,7 +656,9 @@ class PostmanBankBackend:
         from bank2ai import GetTransactionResponse, Transaction
 
         for row in rows:
-            mapped = _to_transaction_dict(row, our_account_ids=ours)
+            mapped = _to_transaction_dict(
+                row, our_account_ids=ours, amount_scale=self.client.settings.amount_scale
+            )
             if mapped["id"] == transaction_id:
                 return GetTransactionResponse(
                     content="Transaction found.", item=Transaction(**mapped)
@@ -609,10 +698,32 @@ class PostmanBankBackend:
         )
         from bank2ai import Party
 
+        if self.client.settings.read_only:
+            return PrepareTransferResponse(
+                content="Transfers are disabled for this read-only FINN demo connection.",
+                code="read_only",
+            )
+
+        try:
+            to_minor_units(amount, self.client.settings.amount_scale)
+        except ValueError as exc:
+            return PrepareTransferResponse(
+                content=str(exc),
+                code="invalid_amount",
+            )
+
         creditor_party = Party.model_validate(creditor)
         if creditor_party.accountIdentifier is None:
             return PrepareTransferResponse(
                 content="creditor.accountIdentifier is required for routing.",
+                code="missing_creditor_identifier",
+            )
+        supplied_account_id = getattr(
+            creditor_party.accountIdentifier, "accountNumber", None
+        )
+        if not supplied_account_id:
+            return PrepareTransferResponse(
+                content="creditor.accountIdentifier.accountNumber is required for routing.",
                 code="missing_creditor_identifier",
             )
 
@@ -630,7 +741,9 @@ class PostmanBankBackend:
                 content=f"No debtor account with id '{debtor_account_id}'.",
                 code="invalid_account",
             )
-        mapped = _to_account_dict(account_row)
+        mapped = _to_account_dict(
+            account_row, amount_scale=self.client.settings.amount_scale
+        )
         if mapped["availableBalance"] < amount:
             return PrepareTransferResponse(content="Insufficient funds.", code="insufficient_funds")
 
@@ -657,23 +770,38 @@ class PostmanBankBackend:
                 code="currency_mismatch",
             )
 
-        # The demo's `toAccountId` must name an account that exists in the sandbox;
-        # resolving it here (at price time) rather than at execute time means the
-        # gate never carries an approval for a transfer that cannot be posted.
-        to_account_id = _resolve_to_account_id(creditor_party, rows)
-        if to_account_id is None:
-            identifier = _identifier_text(creditor_party)
+        # A customer key cannot list another customer's accounts. Resolve the
+        # destination through the sender's trusted beneficiary list instead; the
+        # sandbox transaction endpoint then independently verifies that account
+        # exists, is active, and has a matching currency.
+        beneficiaries = await self._rows(
+            await self.client.get_beneficiaries(), "beneficiaries"
+        )
+        trusted_matches = [
+            row
+            for row in beneficiaries
+            if str(_pick(row, "status", default="")).upper() == "TRUSTED"
+            and str(_pick(row, "name", default="")).strip().casefold()
+            == creditor_party.name.strip().casefold()
+            and _pick(row, "accountId", "account_id")
+        ]
+        if len(trusted_matches) != 1:
             return PrepareTransferResponse(
                 content=(
-                    f"The demo sandbox has no account for recipient '{identifier}'. Its "
-                    "transfers must name an existing accountId; create the counterparty "
-                    "first (POST /api/v1/accounts) or point the demo at a seeded account."
+                    f"Expected one trusted sandbox recipient named '{creditor_party.name}', "
+                    f"found {len(trusted_matches)}. Verify the saved recipient first."
                 ),
                 code="unknown_recipient",
             )
+        to_account_id = str(_pick(trusted_matches[0], "accountId", "account_id"))
+        if str(supplied_account_id) != to_account_id:
+            return PrepareTransferResponse(
+                content="The supplied account does not match the customer's trusted recipient record.",
+                code="recipient_identifier_mismatch",
+            )
 
         now = _utcnow()
-        intent_id = f"intent_{uuid4().hex}"
+        expires_at = now + self._ttl
         summary = TransferSummary(
             debtorAccount=Account(**mapped),
             creditor=creditor_party,
@@ -688,26 +816,20 @@ class PostmanBankBackend:
             endToEndId=end_to_end_id or f"e2e_{uuid4().hex[:16]}",
             description=description,
         )
+        intent_id = _signed_intent(self.client.settings, {
+            "from": debtor_account_id,
+            "to": to_account_id,
+            "amount": amount,
+            "currency": settlement_currency,
+            "description": description,
+            "name": creditor_party.name,
+            "expires": int(expires_at.timestamp()),
+        })
         prepared = PreparedTransfer(
             transferIntentId=intent_id,
-            expiresAt=now + self._ttl,
+            expiresAt=expires_at,
             summary=summary,
         )
-        async with self._lock:
-            self._intents[intent_id] = {
-                "prepared": prepared,
-                "debtor_account_id": debtor_account_id,
-                # Read from the validated Party, not the incoming `creditor`:
-                # over MCP the argument arrives as a Party model, and a dict
-                # lookup would raise AttributeError inside the gated upstream.
-                "creditor_name": creditor_party.name,
-                "to_account": to_account_id,
-                "amount": amount,
-                # amount is priced in major units for the gate; the API body is
-                # committed in this unit, converted to minor units at the boundary.
-                "currency": settlement_currency,
-                "description": description,
-            }
         return PrepareTransferResponse(
             content=(
                 "A transfer has been prepared against the Postman demo bank. Confirm the "
@@ -723,36 +845,28 @@ class PostmanBankBackend:
         """Commit a previously priced intent — the only money-moving call here."""
         from bank2ai import ExecutedTransfer, ExecuteTransferResponse, TransferExecutionStatus
 
-        async with self._lock:
-            if transfer_intent_id in self._executed:
-                return ExecuteTransferResponse(
-                    content=f"Transfer intent '{transfer_intent_id}' has already been executed.",
-                    code="intent_already_executed",
-                )
-            intent = self._intents.get(transfer_intent_id)
-            if intent is None:
-                return ExecuteTransferResponse(
-                    content=f"No such transfer intent '{transfer_intent_id}'.",
-                    code="intent_not_found",
-                )
-            prepared = intent["prepared"]
-            if _utcnow() >= prepared.expiresAt:
-                return ExecuteTransferResponse(
-                    content=(
-                        f"Transfer intent '{transfer_intent_id}' expired at "
-                        f"{prepared.expiresAt.isoformat()}. Call prepare-transfer again."
-                    ),
-                    code="intent_expired",
-                )
-            self._executed.add(transfer_intent_id)
+        if self.client.settings.read_only:
+            return ExecuteTransferResponse(
+                content="Transfers are disabled for this read-only FINN demo connection.",
+                code="read_only",
+            )
+
+        intent = _open_signed_intent(self.client.settings, transfer_intent_id)
+        if intent is None:
+            return ExecuteTransferResponse(
+                content="Transfer details are invalid or the prepared transfer has expired.",
+                code="intent_invalid_or_expired",
+            )
 
         result = await self.client.execute_transfer(
             intent["amount"],
-            intent["to_account"],
+            intent["to"],
             currency=intent["currency"],
-            from_account=intent["debtor_account_id"],
+            from_account=intent["from"],
             description=intent["description"],
-            idempotency_key=idempotency_key,
+            idempotency_key=idempotency_key or (
+                "finn-" + hashlib.sha256(transfer_intent_id.encode()).hexdigest()
+            ),
         )
         if not result.ok_flag:
             # The gate has already approved this call; report a business failure
@@ -768,7 +882,7 @@ class PostmanBankBackend:
         payload = raw.get("transaction") if isinstance(raw.get("transaction"), dict) else raw
         return ExecuteTransferResponse(
             content=(
-                f"Transfer of {intent['amount']:,.2f} {intent['currency']} "
+                f"Transfer of {intent['amount']:,.0f} {intent['currency']} "
                 "completed successfully."
             ),
             item=ExecutedTransfer(
