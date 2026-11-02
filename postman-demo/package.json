@@ -1,0 +1,26 @@
+{
+  "name": "intergalactic-banking-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Banking, Fraud, and Support services for the Postman Fabric Gateway showcase",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "start:api": "npm run start --workspace=@intergalactic/banking-api",
+    "start:mcp": "npm run start --workspace=@intergalactic/banking-mcp",
+    "start:fraud": "npm run start --workspace=@intergalactic/fraud-api",
+    "start:support": "npm run start --workspace=@intergalactic/support-api",
+    "start:support-mcp": "npm run start --workspace=@intergalactic/support-mcp",
+    "dev:api": "npm run dev --workspace=@intergalactic/banking-api",
+    "dev:mcp": "npm run dev --workspace=@intergalactic/banking-mcp",
+    "dev:fraud": "npm run dev --workspace=@intergalactic/fraud-api",
+    "dev:support": "npm run dev --workspace=@intergalactic/support-api",
+    "dev:support-mcp": "npm run dev --workspace=@intergalactic/support-mcp",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "verify": "npm run verify --workspaces --if-present"
+  },
+  "engines": { "node": ">=20.0.0" }
+}

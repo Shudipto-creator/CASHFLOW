@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "🔍 Running monorepo lint..."
+npm run lint
+
+echo "🧪 Running tests..."
+npm test
+
+echo "✅ All pre-commit checks passed!"
