@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useMode } from '../context/ModeContext';
-import { getDocuments, getAnalyses, getDashboardCharts } from '../services/api';
+import { bankingCall, getDocuments, getAnalyses, getDashboardCharts } from '../services/api';
+import { useSignedBankingApi } from '../hooks/useSignedBankingApi';
 import { useNavigate } from 'react-router-dom';
 import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { FileText, Activity, CheckCircle2, Upload, Play, MessageSquare, ArrowUpRight } from 'lucide-react';
+import { FileText, Activity, CheckCircle2, Upload, Play, MessageSquare, ArrowUpRight, Wallet, RefreshCw } from 'lucide-react';
 import LoadingSpinner from '../components/Common/LoadingSpinner';
 import PageHeader from '../components/Common/PageHeader';
 
@@ -23,6 +24,15 @@ const tooltipStyle = {
 
 const formatMoney = (value) =>
   `$${Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+
+const currencyName = {
+  COSMIC_COINS: 'Cosmic Coins',
+  GALAXY_GOLD: 'Galaxy Gold',
+  MOON_BUCKS: 'Moon Bucks',
+};
+
+const formatBankMoney = (value, currency) =>
+  `${Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${currencyName[currency] || currency || ''}`;
 
 const formatSnapshotTime = (timestamp) => {
   if (!timestamp) return 'No runs yet';
@@ -71,6 +81,8 @@ const Dashboard = () => {
   const [chartData, setChartData] = useState(null);
   const [loadingCharts, setLoadingCharts] = useState(false);
   const [loadingStats, setLoadingStats] = useState(true);
+  const [banking, setBanking] = useState({ accounts: [], transactions: [], loading: true, error: null });
+  const { registerPublicKey, signedRequest } = useSignedBankingApi();
 
   const analysisId = localStorage.getItem('lastAnalysisId');
 
@@ -111,6 +123,51 @@ const Dashboard = () => {
     };
     loadCharts();
   }, [analysisId]);
+
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    const loadBanking = async () => {
+      try {
+        await registerPublicKey();
+        const [accountsResult, transactionsResult] = await Promise.all([
+          signedRequest(
+            bankingCall,
+            { tool: 'get-accounts', args: {} },
+            { signal: controller.signal, url: '/api/banking/call' },
+          ),
+          signedRequest(
+            bankingCall,
+            { tool: 'get-transactions', args: { count: 5 } },
+            { signal: controller.signal, url: '/api/banking/call' },
+          ),
+        ]);
+        if (!active) return;
+        const accountsValue = accountsResult.data.value || {};
+        const transactionsValue = transactionsResult.data.value || {};
+        setBanking({
+          accounts: accountsValue.items || accountsValue.accounts || [],
+          transactions: transactionsValue.items || transactionsValue.transactions || [],
+          loading: false,
+          error: null,
+        });
+      } catch (error) {
+        if (!active || error.name === 'CanceledError') return;
+        setBanking((current) => ({
+          ...current,
+          loading: false,
+          error: error.code === 'ECONNABORTED'
+            ? 'Banking service timed out'
+            : 'Banking data unavailable',
+        }));
+      }
+    };
+    loadBanking();
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [registerPublicKey, signedRequest]);
 
   const waterfall = chartData?.revenue_waterfall?.items || [];
   const expenses = chartData?.expense_breakdown || [];
@@ -194,6 +251,83 @@ const Dashboard = () => {
                   {formatMoney(chartData?.revenue_waterfall?.total)}
                 </span>
               </div>
+
+              <section className="mt-6" aria-label="Banking summary">
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <h2 className="panel-title">Banking summary</h2>
+                    <p className="text-[11px] text-[var(--text-muted)]">
+                      Live account and transaction data through the zero-trust banking bridge
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/banking')}
+                    className="btn-outline flex items-center gap-2 px-3 py-2 text-[10px] uppercase tracking-[0.15em]"
+                  >
+                    <Wallet className="h-3.5 w-3.5" aria-hidden="true" /> Open Banking
+                  </button>
+                </div>
+                {banking.loading ? (
+                  <div className="surface-card flex items-center gap-3 p-5 text-xs text-[var(--text-muted)]">
+                    <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" /> Loading secure banking data…
+                  </div>
+                ) : banking.error ? (
+                  <div className="surface-card flex items-center justify-between gap-4 p-5 text-xs">
+                    <span className="text-[var(--negative-color)]">{banking.error}. Open Banking to retry.</span>
+                    <button type="button" onClick={() => navigate('/banking')} className="btn-primary px-3 py-2 text-[10px] uppercase tracking-widest">
+                      Retry
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                    <div className="surface-card p-5">
+                      <h3 className="mb-3 text-xs uppercase tracking-[0.2em] text-[var(--text-muted)]">Accounts and balances</h3>
+                      {banking.accounts.length > 0 ? (
+                        <ul className="space-y-2">
+                          {banking.accounts.map((account) => {
+                            const id = account.id || account.account_id || account.accountId;
+                            const balance = account.available_balance ?? account.availableBalance ?? account.balance;
+                            return (
+                              <li key={id} className="flex items-center justify-between border-b border-[var(--border-color)]/50 py-2 text-xs last:border-0">
+                                <span className="text-[var(--text-secondary)]">
+                                  {account.name || account.owner || 'Account'}
+                                  <span className="ml-2 font-mono text-[10px] text-[var(--text-muted)]">#{id}</span>
+                                </span>
+                                <span className="font-mono text-[var(--text-primary)]">{formatBankMoney(balance, account.currency)}</span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : (
+                        <p className="text-xs text-[var(--text-muted)]">No bank accounts found for this demo run.</p>
+                      )}
+                    </div>
+                    <div className="surface-card p-5">
+                      <h3 className="mb-3 text-xs uppercase tracking-[0.2em] text-[var(--text-muted)]">Recent transactions</h3>
+                      {banking.transactions.length > 0 ? (
+                        <ul className="space-y-2">
+                          {banking.transactions.slice(0, 5).map((transaction) => (
+                            <li key={transaction.id || transaction.transaction_id || transaction.transactionId} className="flex items-center justify-between gap-3 border-b border-[var(--border-color)]/50 py-2 text-xs last:border-0">
+                              <span className="min-w-0 truncate text-[var(--text-secondary)]">
+                                {transaction.description || transaction.name || 'Transaction'}
+                                <span className="block font-mono text-[10px] text-[var(--text-muted)]">
+                                  {transaction.id || transaction.transaction_id || transaction.transactionId || '-'}
+                                </span>
+                              </span>
+                              <span className="shrink-0 font-mono text-[var(--text-primary)]">
+                                {formatBankMoney(transaction.amount, transaction.currency)}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-xs text-[var(--text-muted)]">No transactions found for this demo run.</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </section>
             </div>
 
             <div className="surface-card p-5">
