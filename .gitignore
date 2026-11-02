@@ -236,3 +236,6 @@ CASHFLOW-Banking-Local.postman_environment.json
 
 # Generated working policy for the LLM banking agent (see app/services/llm_banking_agent.py)
 banking-agent/okgate.work.yaml
+
+# Persistent banking database (Postman banking API)
+postman-demo/apps/banking-api/data/

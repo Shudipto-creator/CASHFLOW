@@ -1,6 +1,8 @@
 /**
- * Run-scoped in-memory database.
- * Each demo run receives an independent copy of the canonical fixture.
+ * In-memory database with durable SQLite persistence.
+ * The default run is hydrated from the banking database on boot and saved
+ * after every mutation, so bank state survives restarts. Non-default demo
+ * runs stay ephemeral unless they are explicitly reset or mutated.
  */
 
 const Account = require('../models/Account');
@@ -9,6 +11,7 @@ const Dispute = require('../models/Dispute');
 const { hashApiKey, safeEqualHash } = require('../security/credentials');
 const crypto = require('crypto');
 const { createBankingSeed, seedVersions } = require('@intergalactic/demo-fixtures');
+const persistence = require('./persistence');
 
 const DEFAULT_RUN_ID = 'default';
 const SEED_VERSION = seedVersions.banking;
@@ -18,7 +21,19 @@ const ADMIN_KEY = process.env.ADMIN_API_KEY || 'admin-demo-key';
 class Database {
   constructor() {
     this.runs = new Map();
-    this.resetRun(DEFAULT_RUN_ID);
+    this.ensureRun(DEFAULT_RUN_ID);
+  }
+
+  /**
+   * Returns the run state, hydrating from the banking database when a
+   * persisted snapshot exists and falling back to a fresh canonical seed.
+   */
+  ensureRun(runId = DEFAULT_RUN_ID) {
+    if (this.runs.has(runId)) return this.runs.get(runId);
+    const snapshot = persistence.loadRun(runId);
+    if (snapshot) return this.restoreRun(runId, snapshot);
+    this.resetRun(runId);
+    return this.runs.get(runId);
   }
 
   createEmptyRun() {
@@ -46,8 +61,7 @@ class Database {
   }
 
   getRun(runId = DEFAULT_RUN_ID) {
-    if (!this.runs.has(runId)) this.resetRun(runId);
-    const state = this.runs.get(runId);
+    const state = this.ensureRun(runId);
     state.metadata.lastAccessedAt = Date.now();
     return state;
   }
@@ -62,7 +76,58 @@ class Database {
     const state = this.createEmptyRun();
     this.runs.set(runId, state);
     this.initializeSampleData(runId);
+    this.persistRun(runId);
     return this.getRunSummary(runId);
+  }
+
+  persistRun(runId = DEFAULT_RUN_ID) {
+    const state = this.runs.get(runId);
+    if (state) persistence.saveRun(runId, SEED_VERSION, state);
+  }
+
+  restoreRun(runId, snapshot) {
+    const state = this.createEmptyRun();
+    const restoreMap = (target, entries) => { for (const [key, value] of entries || []) target.set(key, value); };
+
+    restoreMap(state.principals, snapshot.principals);
+    restoreMap(state.credentials, snapshot.credentials);
+    restoreMap(state.customers, snapshot.customers);
+    restoreMap(state.beneficiaries, snapshot.beneficiaries);
+    restoreMap(state.cards, snapshot.cards);
+    restoreMap(state.scheduledPayments, snapshot.scheduledPayments);
+    restoreMap(state.standingOrders, snapshot.standingOrders);
+    restoreMap(state.directDebits, snapshot.directDebits);
+    restoreMap(state.notificationPreferences, snapshot.notificationPreferences);
+    restoreMap(state.idempotency, snapshot.idempotency);
+
+    for (const [, value] of snapshot.accounts || []) {
+      state.accounts.set(value.accountId, new Account(
+        value.accountId, value.owner, value.balance, value.currency, value.createdAt,
+        value.accountType, value.ownerPrincipalId, value.deleted
+      ));
+    }
+    for (const [, value] of snapshot.transactions || []) {
+      state.transactions.set(value.transactionId, new Transaction(
+        value.transactionId, value.fromAccountId, value.toAccountId, value.amount,
+        value.currency, value.createdAt, value
+      ));
+    }
+    for (const [, value] of snapshot.disputes || []) {
+      const dispute = new Dispute(value.disputeId, value.transactionId, value.reason, value.notes, value.createdByPrincipalId, value.createdAt);
+      dispute.status = value.status;
+      dispute.updatedAt = value.updatedAt;
+      dispute.evidence = (value.evidence || []).map(item => Object.freeze(item));
+      state.disputes.set(value.disputeId, dispute);
+    }
+    state.auditEvents.push(...(snapshot.auditEvents || []).map(value => Object.freeze(value)));
+
+    if (snapshot.metadata) {
+      state.metadata.counters = { ...snapshot.metadata.counters };
+      if (typeof snapshot.metadata.clock === 'number') state.metadata.clock = snapshot.metadata.clock;
+    }
+    state.metadata.lastAccessedAt = Date.now();
+    this.runs.set(runId, state);
+    return state;
   }
 
   nextId(runId, prefix) {
@@ -87,6 +152,8 @@ class Database {
     const ttl = parseInt(process.env.DEMO_RUN_TTL_MS, 10) || 3600000;
     const now = Date.now();
     for (const [runId, state] of this.runs.entries()) {
+      // Evict from memory only; the banking database keeps the run durable and
+      // ensureRun() rehydrates it on next access.
       if (runId !== DEFAULT_RUN_ID && now - state.metadata.lastAccessedAt > ttl) this.runs.delete(runId);
     }
   }
@@ -245,11 +312,12 @@ class Database {
       const isBootstrapCredential = [CUSTOMER_KEY, ADMIN_KEY]
         .map(hashApiKey)
         .includes(credentialHash);
-      if (!isBootstrapCredential) return null;
+      const isPersistedRun = persistence.loadRun(runId) !== null;
+      if (!isBootstrapCredential && !isPersistedRun) return null;
       const maxRuns = parseInt(process.env.MAX_DEMO_RUNS, 10) || 100;
       const nonDefaultRuns = Array.from(this.runs.keys()).filter(id => id !== DEFAULT_RUN_ID).length;
-      if (runId !== DEFAULT_RUN_ID && nonDefaultRuns >= maxRuns) return null;
-      this.resetRun(runId);
+      if (runId !== DEFAULT_RUN_ID && nonDefaultRuns >= maxRuns && !isPersistedRun) return null;
+      this.ensureRun(runId);
     }
     const state = this.runs.get(runId);
     const storedHash = Array.from(state.credentials.keys()).find(value => safeEqualHash(value, credentialHash));

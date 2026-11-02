@@ -593,7 +593,14 @@ async def test_prepare_prices_without_moving_money(backend):
     assert any(p == "/api/v1/beneficiaries" for _, p in hits)
 
 
-async def test_read_only_default_blocks_transfer_posts():
+async def test_read_only_default_blocks_transfer_posts(monkeypatch, tmp_path):
+    # Isolate from machine-local operator files so this asserts the shipped
+    # code default (read-only), not a per-machine bank_upstream.local.env.
+    from banking_agent import config as bank_config
+
+    monkeypatch.setattr(bank_config, "UPSTREAM_ENV_FILE", tmp_path / "missing.env")
+    monkeypatch.setattr(bank_config, "LOCAL_UPSTREAM_ENV_FILE", tmp_path / "missing-local.env")
+    monkeypatch.delenv("POSTMAN_DEMO_READ_ONLY", raising=False)
     hits: list[tuple[str, str]] = []
     client = PostmanBankClient(transport=_demo_transport(recorded=hits))
     result = await client.execute_transfer(

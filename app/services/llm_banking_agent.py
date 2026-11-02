@@ -434,7 +434,9 @@ def _transfer_args(message: str) -> dict[str, Any]:
         idx = message.lower().rfind(sep)
         if idx != -1:
             tail = message[idx + len(sep):].strip()
-            name = re.split(r"[,，。!\?]|\s+(?:now|please|today)$", tail)[0].strip()
+            tail = re.sub(r"^(?:my|the|a|an)\s+", "", tail, flags=re.I)
+            tail = re.sub(r"^(?:saved\s+|trusted\s+)?(?:recipient|beneficiary|contact|payee)\s+(?:named|called)?\s*", "", tail, flags=re.I)
+            name = re.split(r"[,，。!\?]|\s+(?:now|please|today)$", tail)[0].strip(" .")
             if name:
                 break
 
@@ -691,7 +693,12 @@ class BankingExecutor:
                     }
                 recipient_result = await gate.call("get-recipients", {"name": str(recipient_name)})
                 recipients = _tool_items(recipient_result.value)
-                exact = [row for row in recipients if str(row.get("name", "")).strip().casefold() == str(recipient_name).strip().casefold()]
+                needle = str(recipient_name).strip().casefold()
+                exact = [row for row in recipients if str(row.get("name", "")).strip().casefold() == needle]
+                if len(exact) != 1:
+                    exact = [row for row in recipients
+                             if (row_name := str(row.get("name", "")).strip().casefold())
+                             and (row_name in needle or needle in row_name)]
                 if not recipient_result.ok or len(exact) != 1:
                     message = "I couldn't find one trusted saved recipient with that name."
                     return {"ok": False, "code": "recipient_not_resolved", "message": message}

@@ -12,6 +12,7 @@ const path = require('path');
 const rateLimit = require('./middleware/rateLimit');
 const requestContext = require('./middleware/requestContext');
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
+const db = require('./database/db');
 
 // Import routes
 const adminRoutes = require('./routes/admin');
@@ -36,6 +37,19 @@ app.use(express.urlencoded({ extended: true }));
 
 // Validate and echo demo-run/request correlation headers before other middleware.
 app.use(requestContext);
+
+// Durable banking database: persist run state after every successful mutation.
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+app.use((req, res, next) => {
+  if (MUTATING_METHODS.has(req.method)) {
+    res.on('finish', () => {
+      if (res.statusCode < 400) {
+        try { db.persistRun(req.runId); } catch (error) { console.error('Failed to persist bank state:', error.message); }
+      }
+    });
+  }
+  next();
+});
 
 // Rate limiting - Apply to all routes
 app.use(rateLimit);
@@ -99,6 +113,7 @@ if (require.main === module) server = app.listen(PORT, () => {
   console.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 URL: http://localhost:${PORT}`);
   console.log(`💚 Health Check: http://localhost:${PORT}/health`);
+  console.log(`🗄️  Banking database: ${require('./database/persistence').DB_PATH}`);
   console.log('');
   console.log('Available endpoints:');
   console.log('  - GET  /api/v1/auth');
@@ -119,12 +134,20 @@ if (require.main === module) server = app.listen(PORT, () => {
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  if (!server) return;
-  console.log('SIGTERM signal received: closing HTTP server');
+const shutdown = signal => {
+  console.log(`${signal} received: persisting bank state and closing HTTP server`);
+  try {
+    for (const runId of db.runs.keys()) db.persistRun(runId);
+  } catch (error) {
+    console.error('Failed to persist bank state on shutdown:', error.message);
+  }
+  if (!server) process.exit(0);
   server.close(() => {
     console.log('HTTP server closed');
+    process.exit(0);
   });
-});
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 module.exports = app;

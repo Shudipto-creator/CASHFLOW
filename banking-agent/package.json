@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@agentwares/agentguard": "^0.1.10"
+  }
+}

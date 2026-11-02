@@ -35,3 +35,38 @@ export async function getDemoBankData(token) {
   }
   return data
 }
+
+async function billflowRequest(path, { method = 'GET', body, formData, token } = {}) {
+  const headers = { ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method,
+    headers,
+    ...(formData ? { body: formData } : body !== undefined ? { body: JSON.stringify(body) } : {}),
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const detail = data.detail
+    const message = Array.isArray(detail) ? detail.map((item) => item.msg).join(', ') : detail || data.message
+    throw new Error(message || 'Could not reach the BillFlow service.')
+  }
+  return data
+}
+
+export const getBillFlowOverview = (token) => billflowRequest('/api/billflow/overview', { token })
+
+export const importBillFlowFile = (file, token) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  return billflowRequest('/api/billflow/import', { method: 'POST', formData, token })
+}
+
+export const getBillFlowTransactions = (params = {}, token) => {
+  const query = new URLSearchParams(
+    Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== ''),
+  ).toString()
+  return billflowRequest(`/api/billflow/transactions${query ? `?${query}` : ''}`, { token })
+}
+
+export const runBillFlowAnomalies = (types, token) =>
+  billflowRequest('/api/billflow/anomalies', { method: 'POST', body: { types }, token })

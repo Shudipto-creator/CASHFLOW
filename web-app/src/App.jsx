@@ -10,6 +10,8 @@ import CfoChatPage from './pages/CfoChatPage.jsx'
 import MePage from './pages/MePage.jsx'
 import ActivityPage from './pages/ActivityPage.jsx'
 import ParametersPage from './pages/ParametersPage.jsx'
+import BillsPage from './pages/BillsPage.jsx'
+import SubscriptionsPage from './pages/SubscriptionsPage.jsx'
 import AuthPage from './pages/AuthPage.jsx'
 import { useAuth } from './context/AuthContext.jsx'
 
@@ -17,7 +19,7 @@ export default function App() {
   const { isAuthenticated, user, signOut } = useAuth()
   const [active, setActive] = useState(() => {
     const saved = sessionStorage.getItem('cashflow-active-screen')
-    return ['home', 'contacts', 'cfo-ai', 'activity', 'me', 'parameters'].includes(saved) ? saved : 'home'
+    return ['home', 'contacts', 'cfo-ai', 'activity', 'me', 'parameters', 'bills-analysis', 'subscriptions'].includes(saved) ? saved : 'home'
   })
   const [notice, setNotice] = useState('')
   const [theme, setTheme] = useState(() => localStorage.getItem('cashflow-theme') || 'dark')
@@ -44,7 +46,9 @@ export default function App() {
     <div className="screen-panel" hidden={active !== 'activity'}><ActivityPage onNotice={notify} /></div>
     <div className="screen-panel" hidden={active !== 'me'}><MePage onNotice={notify} onNavigate={navigate} user={user} onSignOut={signOut} /></div>
     <div className="screen-panel" hidden={active !== 'parameters'}><ParametersPage onNotice={notify} theme={theme} onThemeChange={setTheme} onBack={()=>setActive('me')} /></div>
-    <BottomNavigation active={active === 'parameters' ? 'me' : active} onSelect={navigate} onNotify={() => notify('You’re all caught up.')} />
+    <div className="screen-panel" hidden={active !== 'bills-analysis'}><BillsPage onNotice={notify} /></div>
+    <div className="screen-panel" hidden={active !== 'subscriptions'}><SubscriptionsPage onNotice={notify} /></div>
+    <BottomNavigation active={active === 'parameters' ? 'me' : ['bills-analysis', 'subscriptions'].includes(active) ? 'home' : active} onSelect={navigate} onNotify={() => notify('You’re all caught up.')} />
     <Toast message={notice} />
   </main>
 }
