@@ -4,6 +4,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000
 
 const api = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -75,7 +76,7 @@ export const getAnalysis = (id) =>
   api.get(`/api/analysis/${id}`);
 
 export const askCFO = (data) =>
-  api.post('/api/ask-cfo', data);
+  api.post('/api/ask-cfo', data, { timeout: 30000 });
 
 export const getChatHistory = (analysisId) =>
   api.get(`/api/analysis/${encodeURIComponent(analysisId)}/chat`);
@@ -133,16 +134,20 @@ export const verifyBankingAudit = (data, config) => api.get('/api/banking/audit/
 export const getBankingApprovals = (data, config) => api.get('/api/banking/approvals', config || {});
 
 export const prepareBankingTransfer = (data, config) =>
-  api.post('/api/banking/transfer/prepare', data, config);
+  api.post('/api/banking/transfer/prepare', data, { timeout: 20000, ...(config || {}) });
 export const executeBankingTransfer = (data, config) =>
-  api.post('/api/banking/transfer/execute', data, config);
+  api.post('/api/banking/transfer/execute', data, { timeout: 20000, ...(config || {}) });
 export const approveBankingTransfer = (data, config) =>
-  api.post(`/api/banking/transfer/execute/${encodeURIComponent(config?.intentId || '')}/approve`, data, config);
+  api.post(
+    `/api/banking/transfer/execute/${encodeURIComponent(config?.intentId || '')}/approve`,
+    data,
+    { timeout: 20000, ...(config || {}) },
+  );
 
 export const startMfaChallenge = (data, config) =>
-  api.post('/api/banking/mfa/challenge', data, config);
+  api.post('/api/banking/mfa/challenge', data, { timeout: 15000, ...(config || {}) });
 export const getMfaCode = (challengeId, config) =>
-  api.get(`/api/banking/mfa/code/${encodeURIComponent(challengeId)}`, config);
+  api.get(`/api/banking/mfa/code/${encodeURIComponent(challengeId)}`, { timeout: 15000, ...(config || {}) });
 export const verifyMfaCode = (data, config) =>
   api.post('/api/banking/mfa/verify', data, config);
 

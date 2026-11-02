@@ -1,8 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Square, Volume2 } from 'lucide-react';
-import { askCFO, clearChatHistory, getChatHistory } from '../services/api';
+import {
+  askCFO,
+  bankingCall,
+  clearChatHistory,
+  executeBankingTransfer,
+  getChatHistory,
+  getMfaCode,
+  prepareBankingTransfer,
+  approveBankingTransfer,
+  startMfaChallenge,
+} from '../services/api';
 import { useMode } from '../context/ModeContext';
+import { useSignedBankingApi } from '../hooks/useSignedBankingApi';
 import LoadingSpinner from '../components/Common/LoadingSpinner';
 
 const Chat = () => {
@@ -23,15 +34,159 @@ const Chat = () => {
   const [voiceResponse, setVoiceResponse] = useState(true);
   const [listening, setListening] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
+  const [accounts, setAccounts] = useState([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
+  const [transfer, setTransfer] = useState(null);
+  const [transferLoading, setTransferLoading] = useState(false);
   const messagesEndRef = useRef(null);
   const audioRef = useRef(null);
   const synthesisRef = useRef(null);
   const utteranceRef = useRef(null);
   const recognitionRef = useRef(null);
+  const { registerPublicKey, signedRequest } = useSignedBankingApi();
 
   const isVoiceSupported = typeof window !== 'undefined' && 'speechSynthesis' in window;
   const isRecognitionSupported = typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
   const hasPendingMessage = messages.some((message) => message.status === 'pending');
+
+  useEffect(() => {
+    let active = true;
+    registerPublicKey();
+    signedRequest(bankingCall, { tool: 'get-accounts', args: {} }, { url: '/api/banking/call' })
+      .then((response) => {
+        if (!active) return;
+        const value = response.data.value || {};
+        setAccounts(value.items || value.accounts || []);
+      })
+      .catch(() => {
+        if (active) setAccounts([]);
+      })
+      .finally(() => {
+        if (active) setAccountsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [registerPublicKey, signedRequest]);
+
+  const accountSuggestions = accounts.slice(0, 5);
+
+  const useAccountSuggestion = (account) => {
+    const label = account.name || account.owner || account.id || account.account_id || 'this account';
+    setInputValue(`Show me the balance and recent transactions for ${label}`);
+  };
+
+  const parseTransferRequest = (question) => {
+    const match = question.match(
+      /^(?:please\s+)?transfer\s+(?:¥|\$)?([\d,]+(?:\.\d{1,2})?)\s+(?:cny\s+)?to\s+(.+?)(?:\s+account(?:\s*(?:number|no\.?)?)?\s*[:#-]?\s*([\w -]+))?$/i,
+    );
+    if (!match) return null;
+    return {
+      amount: Number(match[1].replace(/,/g, '')),
+      creditorName: match[2].trim(),
+      creditorAccount: match[3]?.trim() || '',
+    };
+  };
+
+  const appendAssistantMessage = (content) => {
+    setMessages((prev) => [...prev, { id: `local-${Date.now()}`, role: 'assistant', content }]);
+  };
+
+  const prepareChatTransfer = async (draft, confirmed = false, mfa = {}) => {
+    if (!draft.creditorAccount) {
+      appendAssistantMessage('I need the recipient account number before I can prepare this transfer.');
+      return;
+    }
+    setTransferLoading(true);
+    setError(null);
+    try {
+      const response = await signedRequest(
+        prepareBankingTransfer,
+        {
+          debtor_account_id: draft.debtorAccountId,
+          creditor: {
+            name: draft.creditorName,
+            accountIdentifier: {
+              type: 'accountNumber',
+              accountNumber: draft.creditorAccount,
+              country: 'CN',
+            },
+          },
+          amount: draft.amount,
+          currency: 'CNY',
+          rail: 'swift',
+          confirmed,
+          ...mfa,
+        },
+        { url: '/api/banking/transfer/prepare' },
+      );
+      const data = response.data;
+      setTransfer((current) => ({ ...current, ...draft, ...data, stage: data.needs_mfa ? 'mfa' : data.needs_confirmation ? 'confirmation' : data.ok ? 'prepared' : 'error' }));
+      if (data.needs_mfa) {
+        const challenge = await signedRequest(
+          startMfaChallenge,
+          { subject: 'account-holder', purpose: 'strong verification for a chat transfer' },
+          { url: '/api/banking/mfa/challenge' },
+        );
+        const code = await signedRequest(getMfaCode, challenge.data.challenge_id, {
+          url: `/api/banking/mfa/code/${challenge.data.challenge_id}`,
+        });
+        setTransfer((current) => ({
+          ...current,
+          challengeId: challenge.data.challenge_id,
+          deliveredCode: code.data.code,
+          stage: 'mfa',
+        }));
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Transfer preparation failed');
+    } finally {
+      setTransferLoading(false);
+    }
+  };
+
+  const executeChatTransfer = async () => {
+    if (!transfer?.intent_id) return;
+    setTransferLoading(true);
+    try {
+      const response = await signedRequest(
+        executeBankingTransfer,
+        { intent_id: transfer.intent_id },
+        { url: '/api/banking/transfer/execute' },
+      );
+      const data = response.data;
+      setTransfer((current) => ({ ...current, ...data, stage: data.needs_approval ? 'approval' : data.ok ? 'settled' : 'error' }));
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Transfer execution failed');
+    } finally {
+      setTransferLoading(false);
+    }
+  };
+
+  const approveChatTransfer = async () => {
+    if (!transfer?.intent_id || !transfer?.approval_id) return;
+    setTransferLoading(true);
+    try {
+      await signedRequest(
+        approveBankingTransfer,
+        { approval_id: transfer.approval_id },
+        { url: `/api/banking/transfer/execute/${encodeURIComponent(transfer.intent_id)}/approve` },
+      );
+      await executeChatTransfer();
+    } catch (err) {
+      setError(err.response?.data?.detail || 'Transfer approval failed');
+      setTransferLoading(false);
+    }
+  };
+
+  const verifyChatMfa = async () => {
+    if (!transfer?.challengeId || !transfer?.mfaCode) return;
+    await prepareChatTransfer(
+      transfer,
+      true,
+      { mfa_challenge_id: transfer.challengeId, mfa_code: transfer.mfaCode },
+    );
+  };
 
   useEffect(() => {
     synthesisRef.current = window.speechSynthesis;
@@ -174,6 +329,28 @@ const Chat = () => {
     const question = inputValue.trim();
     if (!question || sending || hasPendingMessage) return;
 
+    const transferDraft = parseTransferRequest(question);
+    if (transferDraft) {
+    if (!transferDraft.amount || transferDraft.amount <= 0) {
+      setError('Enter a transfer amount greater than zero.');
+      return;
+    }
+    if (!transferDraft.creditorAccount) {
+      setMessages((prev) => [...prev, { role: 'user', content: question }]);
+      appendAssistantMessage('Tell me the recipient account number too. Example: “Transfer 25 to Alex account 123456”.');
+      setInputValue('');
+      return;
+    }
+    setMessages((prev) => [...prev, { role: 'user', content: question }]);
+    setInputValue('');
+    setTransfer({
+      ...transferDraft,
+      debtorAccountId: '',
+      stage: 'draft',
+    });
+    return;
+    }
+
     const userMessage = { role: 'user', content: question };
     setMessages((prev) => [...prev, userMessage]);
     setInputValue('');
@@ -196,6 +373,7 @@ const Chat = () => {
         role: 'assistant',
         content: data.answer,
       };
+
       setMessages((prev) => (
         prev.some((message) => message.id === assistantMessage.id)
           ? prev
@@ -207,10 +385,18 @@ const Chat = () => {
         speakText(data.answer, assistantMessage.id);
       }
     } catch (err) {
-      setError(err.response?.data?.detail || err.response?.data?.error?.message || 'Failed to send message');
+      setError(
+        err.code === 'ECONNABORTED'
+          ? 'The request timed out. Please check the backend and try again.'
+          : err.response?.data?.detail || err.response?.data?.error?.message || 'Failed to send message',
+      );
     } finally {
       setSending(false);
     }
+  };
+
+  const handleInputKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) e.preventDefault();
   };
 
   const handleStartListening = () => {
@@ -311,7 +497,7 @@ const Chat = () => {
           </div>
         )}
 
-        {analysisId && messages.map((msg, idx) => (
+        {messages.map((msg, idx) => (
           <div
             key={idx}
             className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
@@ -346,6 +532,106 @@ const Chat = () => {
           </div>
         ))}
 
+        {transfer && (
+          <div className="rounded-sm border border-[var(--primary-accent)]/50 bg-[var(--surface-card)] p-4">
+            <p className="mb-3 text-[10px] uppercase tracking-widest text-[var(--primary-accent)]">
+              Zero-trust transfer
+            </p>
+            <dl className="grid grid-cols-2 gap-2 text-xs">
+              <dt className="text-[var(--text-muted)]">Recipient</dt>
+              <dd className="text-[var(--text-primary)]">{transfer.creditorName}</dd>
+              <dt className="text-[var(--text-muted)]">Account</dt>
+              <dd className="font-mono text-[var(--text-primary)]">{transfer.creditorAccount}</dd>
+              <dt className="text-[var(--text-muted)]">Amount</dt>
+              <dd className="text-[var(--text-primary)]">{transfer.amount} CNY</dd>
+              <dt className="text-[var(--text-muted)]">From account</dt>
+              <dd>
+                <select
+                  value={transfer.debtorAccountId}
+                  onChange={(e) => setTransfer((current) => ({ ...current, debtorAccountId: e.target.value }))}
+                  disabled={transfer.stage !== 'draft'}
+                  className="w-full rounded-sm border border-[var(--border-color)] bg-transparent px-2 py-1 text-xs text-[var(--text-primary)]"
+                >
+                  <option value="">Select source account</option>
+                  {accounts.map((account) => {
+                    const id = String(account.id || account.account_id || '');
+                    return <option key={id} value={id}>{account.name || account.owner || id} · {id}</option>;
+                  })}
+                </select>
+              </dd>
+              <dt className="text-[var(--text-muted)]">Stage</dt>
+              <dd className="text-[var(--text-primary)]">{transfer.stage}</dd>
+            </dl>
+            {transfer.stage === 'draft' && (
+              <button
+                type="button"
+                onClick={() => prepareChatTransfer(transfer)}
+                disabled={transferLoading || !transfer.debtorAccountId}
+                className="mt-4 rounded-sm border border-[var(--primary-accent)] px-4 py-2 text-xs uppercase tracking-widest text-[var(--primary-accent)] disabled:opacity-50"
+              >
+                {transferLoading ? 'Preparing…' : 'Review and prepare'}
+              </button>
+            )}
+            {transfer.stage === 'confirmation' && (
+              <button
+                type="button"
+                onClick={() => prepareChatTransfer(transfer, true)}
+                disabled={transferLoading}
+                className="mt-4 rounded-sm border border-[var(--primary-accent)] px-4 py-2 text-xs uppercase tracking-widest text-[var(--primary-accent)] disabled:opacity-50"
+              >
+                {transferLoading ? 'Confirming…' : 'Confirm transfer details'}
+              </button>
+            )}
+            {transfer.stage === 'mfa' && (
+              <div className="mt-4 flex gap-2">
+                <input
+                  value={transfer.mfaCode || ''}
+                  onChange={(e) => setTransfer((current) => ({ ...current, mfaCode: e.target.value.replace(/\D/g, '') }))}
+                  placeholder="6-digit MFA code"
+                  maxLength="6"
+                  className="min-w-0 flex-1 rounded-sm border border-[var(--border-color)] bg-transparent px-3 py-2 text-xs text-[var(--text-primary)]"
+                />
+                <button
+                  type="button"
+                  onClick={verifyChatMfa}
+                  disabled={transferLoading || (transfer.mfaCode || '').length !== 6}
+                  className="rounded-sm border border-[var(--primary-accent)] px-3 py-2 text-xs uppercase tracking-widest text-[var(--primary-accent)] disabled:opacity-50"
+                >
+                  Verify MFA
+                </button>
+              </div>
+            )}
+            {transfer.deliveredCode && transfer.stage === 'mfa' && (
+              <p className="mt-2 text-[10px] text-[var(--text-muted)]">
+                Demo MFA code: <span className="font-mono">{transfer.deliveredCode}</span>
+              </p>
+            )}
+            {transfer.stage === 'prepared' && (
+              <button
+                type="button"
+                onClick={executeChatTransfer}
+                disabled={transferLoading}
+                className="mt-4 rounded-sm border border-[var(--primary-accent)] px-4 py-2 text-xs uppercase tracking-widest text-[var(--primary-accent)] disabled:opacity-50"
+              >
+                {transferLoading ? 'Submitting…' : 'Execute transfer'}
+              </button>
+            )}
+            {transfer.stage === 'approval' && (
+              <button
+                type="button"
+                onClick={approveChatTransfer}
+                disabled={transferLoading}
+                className="mt-4 rounded-sm border border-[var(--primary-accent)] px-4 py-2 text-xs uppercase tracking-widest text-[var(--primary-accent)] disabled:opacity-50"
+              >
+                {transferLoading ? 'Approving…' : 'Approve and execute'}
+              </button>
+            )}
+            {transfer.stage === 'settled' && (
+              <p className="mt-4 text-xs text-[var(--positive-color)]">Transfer settled successfully.</p>
+            )}
+          </div>
+        )}
+
         {error && (
           <div className="p-4 border border-[var(--negative-color)] bg-[rgba(248,113,113,0.08)] rounded-sm">
             <p className="font-mono text-sm text-[var(--negative-color)]">{error}</p>
@@ -363,12 +649,38 @@ const Chat = () => {
       </div>
 
       <div className="border-t border-[var(--border-color)] p-4">
-        {analysisId && (
+        <>
+          {accountsLoading && (
+            <p className="mb-3 text-[10px] text-[var(--text-muted)]">Loading secure bank accounts…</p>
+          )}
+          {!accountsLoading && accountSuggestions.length > 0 && (
+            <div className="mb-3">
+              <p className="mb-2 text-[10px] uppercase tracking-widest text-[var(--text-muted)]">
+                Postman bank accounts
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {accountSuggestions.map((account) => {
+                  const id = account.id || account.account_id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => useAccountSuggestion(account)}
+                      className="rounded-sm border border-[var(--border-color)] px-3 py-2 text-left text-xs text-[var(--text-secondary)] hover:border-[var(--primary-accent)] hover:text-[var(--primary-accent)]"
+                    >
+                      {account.name || account.owner || 'Account'} <span className="font-mono text-[10px]">#{id}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <form onSubmit={handleSend} className="flex gap-3">
             <input
               type="text"
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={handleInputKeyDown}
               placeholder="Ask AI CFO a financial question\u2026"
               disabled={sending || hasPendingMessage || loadingHistory}
               className="flex-1 bg-transparent border border-[var(--border-color)] text-[var(--text-primary)] text-sm px-3 py-2 focus:outline-none focus:border-[var(--primary-accent)] disabled:opacity-50"
@@ -395,10 +707,10 @@ const Chat = () => {
               Send
             </button>
           </form>
-        )}
-        {!analysisId && (
-          <p className="text-[var(--text-muted)] font-mono text-xs uppercase tracking-widest">
-            Open a report to start asking questions
+        </>
+        {analysisId && (
+          <p className="mt-2 text-[10px] text-[var(--text-muted)]">
+            Click Send to submit. Enter stays in the field.
           </p>
         )}
       </div>

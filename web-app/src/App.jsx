@@ -32,7 +32,6 @@ export default function App() {
   function navigate(id) {
     setActive(id)
     if (id === 'me') notify('Me area is ready for your team to build.')
-    if (id === 'cfo-ai') notify('CFO AI chat is ready to connect to the LLM and backend.')
     if (id === 'activity') notify('Activity history is ready to connect.')
   }
 

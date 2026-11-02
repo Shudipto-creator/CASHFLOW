@@ -811,6 +811,24 @@ class LLMBankingAgent:
                 message="Empty message. Tell the agent what you want to do.",
             )
 
+        normalized = re.sub(r"[.!?,]+", "", message.lower()).strip()
+        if normalized in {
+            "hi", "hello", "hey", "hi there", "hello there",
+            "good morning", "good afternoon", "good evening",
+            "你好", "您好", "嗨",
+        }:
+            return AgentResult(
+                implemented=True,
+                code="GREETING",
+                operation_id=None,
+                message=(
+                    "Hi! I'm FINN, your financial navigator. I can look up "
+                    "accounts, transactions and exchange rates, or help prepare "
+                    "a transfer. I'll ask before anything risky. What would you "
+                    "like to do?"
+                ),
+            )
+
         # 1. RAG — retrieve the operations that are actually available.
         retrieved = self.rag.retrieve(message) if self.rag else []
         retrieved = [oid for oid in retrieved if oid in self.registry]

@@ -20,7 +20,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-#: Operator-owned KEY=VALUE file that can set the same keys as the env vars.
+#: Tracked operator template plus an ignored local file for credentials.
 #:
 #: Why a file at all: okgate spawns the bank upstream with the MCP SDK's default
 #: environment plus only the keys declared in okgate.yaml's `upstreams[].env`
@@ -33,21 +33,23 @@ from typing import Optional
 #: tiers, MFA, the loop breaker and the kill switch are read from okgate.yaml and
 #: gate/tiers.py regardless of what is in here.
 UPSTREAM_ENV_FILE = Path(__file__).resolve().parents[1] / "bank_upstream.env"
+LOCAL_UPSTREAM_ENV_FILE = Path(__file__).resolve().parents[1] / "bank_upstream.local.env"
 
 
 def _file_overrides() -> dict[str, str]:
-    """Parse the operator file. Missing or unreadable means 'no overrides'."""
-    try:
-        lines = UPSTREAM_ENV_FILE.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return {}
+    """Read the tracked template, then let the ignored local file override it."""
     values: dict[str, str] = {}
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    for path in (UPSTREAM_ENV_FILE, LOCAL_UPSTREAM_ENV_FILE):
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
             continue
-        key, _, value = line.partition("=")
-        values[key.strip()] = value.strip().strip('"').strip("'")
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip().strip('"').strip("'")
     return values
 
 

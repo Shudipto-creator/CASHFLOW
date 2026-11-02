@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowUpRight, FileSearch, Repeat2, Send, Sparkles } from 'lucide-react'
+import { useAuth } from '../context/AuthContext.jsx'
+import { chatWithCfoAi } from '../services/api.js'
 
 const suggestions = [
   { label: 'Transfer to @', prompt: 'I’d like to make a transfer. Help me choose a contact and review the details.', icon: ArrowUpRight },
@@ -7,10 +9,17 @@ const suggestions = [
   { label: 'Cancel unused subscriptions', prompt: 'Help me find subscriptions I may not be using. Ask me before taking any action.', icon: Repeat2 },
 ]
 
+function formatMessageTime(timestamp) {
+  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date(timestamp))
+}
+
 export default function CfoChatPage({ onNotice }) {
+  const { token } = useAuth()
   const [messages, setMessages] = useState([])
   const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
   const threadRef = useRef(null)
+  const [welcomeTime] = useState(() => Date.now())
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' })
@@ -26,13 +35,33 @@ export default function CfoChatPage({ onNotice }) {
     }
   }
 
-  function submitMessage(event) {
+  async function submitMessage(event) {
     event.preventDefault()
-    if (!draft.trim()) return
-    setMessages((current) => [...current, { id: `${Date.now()}-${current.length}`, text: draft.trim() }])
+    const message = draft.trim()
+    if (!message || sending) return
+    setMessages((current) => [...current, { id: `${Date.now()}-user`, role: 'user', text: message, timestamp: Date.now() }])
     setDraft('')
     const input = event.currentTarget.querySelector('textarea')
     if (input) input.style.height = '38px'
+    setSending(true)
+    try {
+      const result = await chatWithCfoAi(message, token)
+      setMessages((current) => [...current, {
+        id: `${Date.now()}-assistant`,
+        role: 'assistant',
+        text: result.message,
+        timestamp: Date.now(),
+      }])
+    } catch (error) {
+      setMessages((current) => [...current, {
+        id: `${Date.now()}-error`,
+        role: 'assistant',
+        text: error.message || 'I could not reach FINN AI. Please try again.',
+        timestamp: Date.now(),
+      }])
+    } finally {
+      setSending(false)
+    }
   }
 
   function updateDraft(event) {
@@ -45,10 +74,13 @@ export default function CfoChatPage({ onNotice }) {
     <div className="chat-thread" ref={threadRef}>
       <div className="suggestion-intro"><Sparkles size={14}/><span>HERE ARE A FEW THINGS I CAN HELP WITH</span></div>
       <div className="chat-suggestions">{suggestions.map(({label,prompt,icon:Icon})=><button className="suggestion-card" key={label} onClick={()=>startPrompt(prompt)}><span><Icon size={17}/></span><b>{label}</b><i>↗</i></button>)}</div>
-      <div className="chat-welcome"><span className="message-time">CFO AI · JUST NOW</span><div className="welcome-bubble"><p>Hi there, I’m CFO AI, your financial navigator. Tell me what you need and I’ll help you with it. I’ll always ask before doing anything risky.</p></div></div>
-      {messages.map(({ id, text }) => <div className="user-message" key={id}><span>{text}</span></div>)}
+      <div className="chat-welcome"><time className="message-time" dateTime={new Date(welcomeTime).toISOString()}>FINN AI · {formatMessageTime(welcomeTime)}</time><div className="welcome-bubble"><p>Hi there, I’m FINN, your financial navigator. Tell me what you need and I’ll help you with it. I’ll always ask before doing anything risky.</p></div></div>
+      {messages.map(({ id, role, text, timestamp }) => role === 'user'
+        ? <div className="user-message" key={id}><time className="message-time user-message-time" dateTime={new Date(timestamp).toISOString()}>{formatMessageTime(timestamp)}</time><span>{text}</span></div>
+        : <div className="chat-welcome assistant-message" key={id}><time className="message-time" dateTime={new Date(timestamp).toISOString()}>FINN AI · {formatMessageTime(timestamp)}</time><div className="welcome-bubble"><p>{text}</p></div></div>)}
+      {sending && <div className="chat-welcome assistant-message" role="status"><span className="message-time">FINN AI · THINKING</span><div className="welcome-bubble"><p>One moment…</p></div></div>}
     </div>
-    <form className="chat-composer" onSubmit={submitMessage}><textarea rows="1" value={draft} onChange={updateDraft} placeholder="Ask CFO AI…" aria-label="Message CFO AI"/><button type="submit" disabled={!draft.trim()} aria-label="Send message"><Send size={17}/></button></form>
+    <form className="chat-composer" onSubmit={submitMessage}><textarea rows="1" value={draft} onChange={updateDraft} placeholder="Ask FINN…" aria-label="Message FINN AI" disabled={sending}/><button type="submit" disabled={!draft.trim() || sending} aria-label="Send message"><Send size={17}/></button></form>
   </section>
 }
 

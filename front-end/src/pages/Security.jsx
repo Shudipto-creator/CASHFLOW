@@ -64,17 +64,23 @@ export default function Security() {
     const controller = new AbortController();
     const load = async () => {
       try {
-        const [spendRes, statusRes, toolsRes] = await Promise.all([
+        const results = await Promise.allSettled([
           signedGetSpend({ signal: controller.signal }),
           signedGetStatus({ signal: controller.signal }),
           signedGetTools({ signal: controller.signal }),
         ]);
-        setSpend(spendRes.data.spent_today_cny ?? '0');
-        setStatus(statusRes.data.status || '');
-        setTools(toolsRes.data.tools || []);
-        const text = (statusRes.data.status || '').toLowerCase();
+        const [spendResult, statusResult, toolsResult] = results;
+        if (spendResult.status === 'fulfilled') setSpend(spendResult.value.data.spent_today_cny ?? '0');
+        if (statusResult.status === 'fulfilled') setStatus(statusResult.value.data.status || '');
+        if (toolsResult.status === 'fulfilled') setTools(toolsResult.value.data.tools || []);
+        const text = (statusResult.status === 'fulfilled' ? statusResult.value.data.status || '' : '').toLowerCase();
         setTier(/red/.test(text) ? 'red' : /yellow/.test(text) ? 'yellow' : 'green');
-        setError(null);
+        const failed = results.filter((result) => result.status === 'rejected');
+        if (failed.length === 0) {
+          setError(null);
+        } else {
+          setError('Some security services did not respond. Check the backend and retry.');
+        }
       } catch (error) {
         if (error.name === 'CanceledError') return;
         console.error('Security load failed:', error);
@@ -102,16 +108,23 @@ export default function Security() {
     }
     const controller = new AbortController();
     try {
-      const [spendRes, statusRes, toolsRes] = await Promise.all([
+      const results = await Promise.allSettled([
         signedGetSpend({ signal: controller.signal }),
         signedGetStatus({ signal: controller.signal }),
         signedGetTools({ signal: controller.signal }),
       ]);
-      setSpend(spendRes.data.spent_today_cny ?? '0');
-      setStatus(statusRes.data.status || '');
-      setTools(toolsRes.data.tools || []);
-      const text = (statusRes.data.status || '').toLowerCase();
+      const [spendResult, statusResult, toolsResult] = results;
+      if (spendResult.status === 'fulfilled') setSpend(spendResult.value.data.spent_today_cny ?? '0');
+      if (statusResult.status === 'fulfilled') setStatus(statusResult.value.data.status || '');
+      if (toolsResult.status === 'fulfilled') setTools(toolsResult.value.data.tools || []);
+      const text = (statusResult.status === 'fulfilled' ? statusResult.value.data.status || '' : '').toLowerCase();
       setTier(/red/.test(text) ? 'red' : /yellow/.test(text) ? 'yellow' : 'green');
+      const failed = results.filter((result) => result.status === 'rejected');
+      if (failed.length > 0) {
+        setError('Some security services did not respond. Check the backend and retry.');
+      } else {
+        setError(null);
+      }
     } catch (error) {
       if (error.name === 'CanceledError') return;
       console.error('Security load failed:', error);

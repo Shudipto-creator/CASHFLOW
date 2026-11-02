@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "CASHFLOW",
-  "short_name": "CASHFLOW",
-  "description": "A clearer view of your money.",
+  "name": "FINN — Financial Intelligence Navigation Network",
+  "short_name": "FINN",
+  "description": "A conversational AI banking assistant that keeps you in control.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

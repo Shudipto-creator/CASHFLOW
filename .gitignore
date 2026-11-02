@@ -231,6 +231,8 @@ topic.md
 # NEVER commit these — the passphrase is injected via environment variables.
 app/secrets/
 banking-agent/secrets/
+banking-agent/bank_upstream.local.env
+CASHFLOW-Banking-Local.postman_environment.json
 
 # Generated working policy for the LLM banking agent (see app/services/llm_banking_agent.py)
 banking-agent/okgate.work.yaml

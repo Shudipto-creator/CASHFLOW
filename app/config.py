@@ -40,7 +40,10 @@ class Settings(BaseSettings):
     # API Server
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    cors_origins: str = "http://localhost:5173,http://localhost:3000"
+    cors_origins: str = (
+        "http://localhost:5173,http://localhost:3000,"
+        "http://127.0.0.1:5173,http://127.0.0.1:3000"
+    )
 
     # AWS Bedrock Models
     nova_lite_model_id: str = "global.amazon.nova-2-lite-v1:0"

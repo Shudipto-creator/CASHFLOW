@@ -9,7 +9,7 @@ export const personalTools = [
 export const navigation = [
   { id: 'home', label: 'Home', icon: Home },
   { id: 'contacts', label: 'Contact', icon: Users },
-  { id: 'cfo-ai', label: 'CFO AI', icon: Bot },
+  { id: 'cfo-ai', label: 'FINN AI', icon: Bot },
   { id: 'activity', label: 'Activity', icon: Activity },
   { id: 'me', label: 'Me', icon: UserRound },
 ]
