@@ -6,6 +6,16 @@ from datetime import datetime
 import re
 
 
+def validate_password_strength(value):
+    if not re.search(r"[A-Z]", value):
+        raise ValueError("Password must contain at least one uppercase letter")
+    if not re.search(r"[a-z]", value):
+        raise ValueError("Password must contain at least one lowercase letter")
+    if not re.search(r"[0-9]", value):
+        raise ValueError("Password must contain at least one number")
+    return value
+
+
 # Authentication Schemas
 class UserRegister(BaseModel):
     email: EmailStr
@@ -15,18 +25,27 @@ class UserRegister(BaseModel):
 
     @validator("password")
     def password_strength(cls, v):
-        if not re.search(r"[A-Z]", v):
-            raise ValueError("Password must contain at least one uppercase letter")
-        if not re.search(r"[a-z]", v):
-            raise ValueError("Password must contain at least one lowercase letter")
-        if not re.search(r"[0-9]", v):
-            raise ValueError("Password must contain at least one number")
-        return v
+        return validate_password_strength(v)
 
 
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
+
+class PasswordRecoveryRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordRecoveryComplete(BaseModel):
+    email: EmailStr
+    challenge_id: str = Field(..., min_length=1, max_length=100)
+    code: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+    new_password: str = Field(..., min_length=8)
+
+    @validator("new_password")
+    def password_strength(cls, value):
+        return validate_password_strength(value)
 
 
 class UserResponse(BaseModel):

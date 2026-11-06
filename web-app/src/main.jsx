@@ -3,8 +3,13 @@ import { createRoot } from 'react-dom/client'
 import App from './App.jsx'
 import './style.css'
 import { AuthProvider } from './context/AuthContext.jsx'
+import { LanguageProvider } from './context/LanguageContext.jsx'
 
-createRoot(document.getElementById('root')).render(<AuthProvider><App /></AuthProvider>)
+createRoot(document.getElementById('root')).render(
+  <AuthProvider>
+    <LanguageProvider><App /></LanguageProvider>
+  </AuthProvider>,
+)
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {

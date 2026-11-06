@@ -75,6 +75,7 @@ from app.core.security.audit_ledger import (  # noqa: E402
 from app.core.security.keys import load_private_key  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.services.banking_service import _log_decision  # noqa: E402
+from app.services import finn_bank  # noqa: E402
 from app.schemas import (  # noqa: E402
     TransferPrepareRequest,
     TransferExecuteRequest,
@@ -446,6 +447,20 @@ async def generic_call(
     canonical = canonicalize(payload.args or {})
     args_hash = hash_payload(canonical)
 
+    # FINN is the authoritative, per-user banking dataset.  These reads are
+    # deliberately resolved before the legacy shared demo-bank adapter.
+    if payload.tool in {"get-accounts", "get-transactions"}:
+        value = (
+            finn_bank.accounts_for(user)
+            if payload.tool == "get-accounts"
+            else finn_bank.transactions_for(user, (payload.args or {}).get("count", 10))
+        )
+        _log_decision(user.user_id, "finn_" + payload.tool,
+                      {"client_id": sig_info["client_id"], "args_hash": args_hash},
+                      "ok", {"customer_scoped": True, "stid": sig_info["stid"]})
+        return {"ok": True, "stage": None, "code": None, "message": "FINN banking data loaded.",
+                "tier": "green", "value": value, "stid": sig_info["stid"]}
+
     async for gate, client in _open_gate(user, request):
         try:
             outcome = await gate.call(
@@ -556,6 +571,35 @@ async def transfer_prepare(
     )
     args_hash = hash_payload(canonical)
 
+    # FINN transfer preparation is customer-scoped and never trusts an account
+    # or customer identifier supplied by the browser.  The established request
+    # signature remains mandatory above; confirmation/MFA is enforced here.
+    if schema_req.currency.upper() == "CNY":
+        if schema_req.amount > 1000:
+            if not (schema_req.mfa_challenge_id and schema_req.mfa_code):
+                return {"ok": False, "stage": "prepared", "code": GateCode.MFA_REQUIRED.value,
+                        "message": "Strong verification is required for transfers above CNY 1,000.",
+                        "tier": "red", "needs_mfa": True, "needs_confirmation": False, "needs_approval": False,
+                        "stid": sig_info["stid"]}
+            if not await MFA_VERIFIER.verify(challenge_id=schema_req.mfa_challenge_id, code=schema_req.mfa_code):
+                raise HTTPException(status_code=403, detail="MFA verification failed")
+        if not schema_req.confirmed:
+            return {"ok": False, "stage": "prepared", "code": GateCode.CONFIRMATION_REQUIRED.value,
+                    "message": "Review the transfer details and confirm to continue.",
+                    "tier": "red" if schema_req.amount > 1000 else "yellow", "needs_mfa": False,
+                    "needs_confirmation": True, "needs_approval": False, "stid": sig_info["stid"]}
+        intent_id = finn_bank.prepare_transfer(
+            user, debtor_account_id=schema_req.debtor_account_id, creditor_name=schema_req.creditor.name,
+            creditor_account_number=str(schema_req.creditor.accountIdentifier.get("accountNumber", "")),
+            amount=schema_req.amount, currency=schema_req.currency.upper(), description=schema_req.description,
+        )
+        _log_decision(user.user_id, "finn_transfer_prepare",
+                      {"account": schema_req.debtor_account_id, "amount": schema_req.amount, "args_hash": args_hash},
+                      "ok", {"intent_id": intent_id, "customer_scoped": True})
+        return {"ok": True, "stage": "prepared", "code": None, "message": "FINN transfer prepared.",
+                "tier": "red" if schema_req.amount > 1000 else "yellow", "intent_id": intent_id,
+                "needs_mfa": False, "needs_confirmation": False, "needs_approval": False, "stid": sig_info["stid"]}
+
     async for gate, client in _open_gate(user, request):
         try:
             outcome = await gate.transfer(
@@ -655,6 +699,15 @@ async def transfer_execute(
 
     canonical = canonicalize({"intent_id": payload.intent_id})
     args_hash = hash_payload(canonical)
+
+    if payload.intent_id.startswith("finn_"):
+        settlement = finn_bank.execute_transfer(user, payload.intent_id)
+        _log_decision(user.user_id, "finn_transfer_execute",
+                      {"intent_id": payload.intent_id, "args_hash": args_hash}, "ok",
+                      {**settlement, "customer_scoped": True})
+        return {"ok": True, "stage": "executed", "code": None, "message": "FINN transfer settled.",
+                "tier": None, "value": settlement, "needs_mfa": False, "needs_confirmation": False,
+                "needs_approval": False, "stid": sig_info["stid"]}
 
     async for gate, client in _open_gate(user, request):
         try:

@@ -22,6 +22,7 @@ from app.routers import (
     portfolio,
     banking,
     banking_agent,
+    contacts,
 )
 from app.services.llm_factory import get_embedding_client, get_llm_client
 from app.services.mode_service import get_processing_mode
@@ -75,6 +76,7 @@ app.include_router(billflow.router)
 app.include_router(portfolio.router)
 app.include_router(banking.router)
 app.include_router(banking_agent.router)
+app.include_router(contacts.router)
 
 
 # Signing key is stored on app.state.signing_private_key at startup.

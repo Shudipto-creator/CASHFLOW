@@ -1,6 +1,6 @@
 """Database models for CASHFLOW"""
 
-from sqlalchemy import Column, String, Integer, Float, Boolean, Text, ForeignKey, DateTime, JSON
+from sqlalchemy import Column, String, Integer, Float, Boolean, Text, ForeignKey, DateTime, JSON, UniqueConstraint
 from sqlalchemy.sql import func
 from app.database import Base
 import uuid
@@ -24,6 +24,30 @@ class User(Base):
     role = Column(String(20), nullable=False, default="user")  # "admin" or "user"
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class BankCustomerLink(Base):
+    """Server-owned link between an application user and one FINN customer."""
+
+    __tablename__ = "bank_customer_links"
+
+    user_id = Column(String(36), ForeignKey("users.user_id"), primary_key=True)
+    customer_id = Column(String(36), nullable=False, unique=True, index=True)
+    linked_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class FinnContact(Base):
+    """A user's saved link to a customer in the separate FINNDB database."""
+
+    __tablename__ = "finn_contacts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "customer_id", name="uq_finn_contact_owner_customer"),
+    )
+
+    contact_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.user_id"), nullable=False, index=True)
+    customer_id = Column(String(36), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class Document(Base):

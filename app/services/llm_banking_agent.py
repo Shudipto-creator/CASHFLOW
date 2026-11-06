@@ -894,6 +894,7 @@ class LLMBankingAgent:
         confirmed: bool = False,
         mfa_challenge_id: Optional[str] = None,
         mfa_code: Optional[str] = None,
+        excluded_operations: set[str] | None = None,
     ) -> AgentResult:
         """Process one user message end-to-end."""
         message = (message or "").strip()
@@ -924,9 +925,18 @@ class LLMBankingAgent:
         # 1. RAG — retrieve the operations that are actually available.
         retrieved = self.rag.retrieve(message) if self.rag else []
         retrieved = [oid for oid in retrieved if oid in self.registry]
+        if excluded_operations:
+            available = [
+                operation_id for operation_id in self.registry
+                if operation_id not in excluded_operations
+            ]
+            retrieved = [operation_id for operation_id in retrieved if operation_id in available]
+            candidates = retrieved or available
+        else:
+            candidates = retrieved or None
 
         # 2. Select — map the message onto one candidate.
-        selected = self.selector.select(message, retrieved or None)
+        selected = self.selector.select(message, candidates)
 
         # 3. THE GUARD — never execute an operation the LLM invented.
         #    selected.operation_id is only ever a registry key (see selectors),

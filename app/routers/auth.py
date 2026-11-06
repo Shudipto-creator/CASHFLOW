@@ -5,11 +5,14 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models, schemas
 from app.utils.auth import hash_password, verify_password, create_access_token, get_token_expiration_seconds
+from app.config import get_settings
+from app.services.password_recovery import PasswordRecoveryCodes, RecoveryCooldownError
 from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
+password_recovery_codes = PasswordRecoveryCodes()
 
 
 @router.post("/register", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED)
@@ -104,3 +107,59 @@ async def login_user(login_data: schemas.UserLogin, db: Session = Depends(get_db
             created_at=user.created_at,
         ),
     )
+
+
+@router.post("/password-recovery/request")
+async def request_password_recovery(
+    request_data: schemas.PasswordRecoveryRequest,
+):
+    if get_settings().app_env.lower() != "development":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password recovery delivery is not configured for this environment",
+        )
+
+    try:
+        challenge_id = password_recovery_codes.issue(str(request_data.email))
+    except RecoveryCooldownError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(exc),
+        ) from exc
+
+    return {
+        "challenge_id": challenge_id,
+        "message": (
+            "If that email is registered, a recovery code has been generated. "
+            "For this demo, check the backend terminal."
+        ),
+    }
+
+
+@router.post("/password-recovery/complete")
+async def complete_password_recovery(
+    request_data: schemas.PasswordRecoveryComplete,
+    db: Session = Depends(get_db),
+):
+    email = str(request_data.email)
+    if not password_recovery_codes.verify(
+        email,
+        request_data.challenge_id,
+        request_data.code,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not complete password recovery. Check the email and code, then try again.",
+        )
+
+    user = db.query(models.User).filter(models.User.email.ilike(email)).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not complete password recovery. Check the email and code, then try again.",
+        )
+
+    user.password_hash = hash_password(request_data.new_password)
+    db.commit()
+    logger.info("Password recovered for user %s", user.user_id)
+    return {"message": "Password updated. You can now sign in with your new password."}
