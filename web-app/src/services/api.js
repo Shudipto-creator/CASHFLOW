@@ -26,6 +26,17 @@ export const requestPasswordRecovery = (email) =>
 export const completePasswordRecovery = ({ email, challenge_id, code, new_password }) =>
   request('/api/auth/password-recovery/complete', { email, challenge_id, code, new_password })
 export const chatWithCfoAi = (message, token, options = {}) => request('/api/banking/agent/chat', { message, ...options }, token)
+export async function getCfoConversation(token, conversationId) {
+  const query = conversationId ? `?conversation_id=${encodeURIComponent(conversationId)}` : ''
+  const response = await fetch(`${API_BASE_URL}/api/banking/agent/chat/history${query}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    throw new Error(data.detail || 'Could not load your FINN conversation.')
+  }
+  return data
+}
 export const approveSandboxTransfer = (intent_id, approval_id, token) =>
   request('/api/banking/agent/transfer/approve', { intent_id, approval_id }, token)
 

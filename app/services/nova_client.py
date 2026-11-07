@@ -138,6 +138,7 @@ class NovaClient:
         temperature: float = 0.3,
         max_tokens: int = 2000,
         reasoning_effort: str = "medium",
+        json_mode: bool = False,
     ) -> Dict[str, Any]:
         """
         Invoke Nova model with given parameters
@@ -152,6 +153,9 @@ class NovaClient:
         Returns:
             Parsed JSON response from model
         """
+        # Nova is already steered to JSON by the prompt; the flag exists so the
+        # intent layer can use one call signature across providers.
+        del json_mode
         model_candidates = self._profile_model_candidates(self.model_id)
         for attempt in range(settings.max_retries):
             try:

@@ -34,6 +34,8 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+from app.services.cfo_conversation import history_for_prompt  # noqa: E402
+
 #: The repo has two `banking_agent` packages: the top-level `banking_agent/`
 #: (WeCom bot) and `banking-agent/banking_agent/` (the Zero-Trust gate). The
 #: executor needs the gate one, so its directory must win on ``sys.path``.
@@ -369,7 +371,13 @@ class DeterministicSelector:
             if t not in DeterministicSelector.STOPWORDS
         }
 
-    def select(self, message: str, candidates: Optional[list[str]] = None) -> SelectResult:
+    def select(
+        self,
+        message: str,
+        candidates: Optional[list[str]] = None,
+        history: Optional[list[dict[str, Any]]] = None,
+    ) -> SelectResult:
+        del history  # deterministic resolution uses the current message only
         msg = message.lower()
         pool = (
             [self.registry[c] for c in candidates if c in self.registry]
@@ -469,7 +477,9 @@ class LLMSelector:
         '{"operation_id": null, "not_implemented": true}.\n'
         "3. Reply with a single JSON object:\n"
         '{"operation_id": "<id>", "args": {...}, "rationale": "<short>"}\n'
-        "4. Do not add commentary outside the JSON."
+        "4. Do not add commentary outside the JSON.\n"
+        "5. CONVERSATION CONTEXT, when present, is this same conversation. Use it "
+        "to understand follow-ups and omitted details; the latest message wins."
     )
 
     def __init__(
@@ -480,7 +490,12 @@ class LLMSelector:
         self.llm_client = llm_client
         self.registry = registry or BANKING_OPERATIONS
 
-    def select(self, message: str, candidates: Optional[list[str]] = None) -> SelectResult:
+    def select(
+        self,
+        message: str,
+        candidates: Optional[list[str]] = None,
+        history: Optional[list[dict[str, Any]]] = None,
+    ) -> SelectResult:
         pool = (
             [self.registry[c] for c in candidates if c in self.registry]
             if candidates
@@ -491,10 +506,12 @@ class LLMSelector:
             f"{', '.join(op.required_args) if op.required_args else 'none'})"
             for op in pool
         )
+        history_block = history_for_prompt(history or [])
         prompt = (
-            f"USER MESSAGE: {message}\n\n"
-            f"AVAILABLE_OPERATIONS:\n{listing}\n\n"
-            "Which operation_id, if any, does this message request? Reply in JSON."
+            (f"CONVERSATION SO FAR:\n{history_block}\n\n" if history_block else "")
+            + f"USER MESSAGE: {message}\n\n"
+            + f"AVAILABLE_OPERATIONS:\n{listing}\n\n"
+            + "Which operation_id, if any, does this message request? Reply in JSON."
         )
         try:
             raw = self.llm_client.invoke_agent(
@@ -502,6 +519,7 @@ class LLMSelector:
                 system_prompt=self.SELECTION_SYSTEM_PROMPT,
                 temperature=0.0,
                 max_tokens=600,
+                json_mode=True,
             )
         except Exception as exc:
             logger.warning("LLM selector failed (%s); falling back to deterministic", exc)
@@ -895,6 +913,7 @@ class LLMBankingAgent:
         mfa_challenge_id: Optional[str] = None,
         mfa_code: Optional[str] = None,
         excluded_operations: set[str] | None = None,
+        history: Optional[list[dict[str, Any]]] = None,
     ) -> AgentResult:
         """Process one user message end-to-end."""
         message = (message or "").strip()
@@ -936,7 +955,7 @@ class LLMBankingAgent:
             candidates = retrieved or None
 
         # 2. Select — map the message onto one candidate.
-        selected = self.selector.select(message, candidates)
+        selected = self.selector.select(message, candidates, history=history)
 
         # 3. THE GUARD — never execute an operation the LLM invented.
         #    selected.operation_id is only ever a registry key (see selectors),

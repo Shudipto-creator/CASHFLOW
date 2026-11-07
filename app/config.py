@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
 
     # Database
-    database_url: str = "sqlite:///./data/cashflow.db"
+    database_url: str = "sqlite:///./data/cfone.db"
 
     # File Storage
     upload_dir: str = "./uploads"

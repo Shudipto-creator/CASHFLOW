@@ -128,6 +128,27 @@ class ChatMessage(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
+class CfoChatMessage(Base):
+    """Durable transcript for the FINN CFO chat (one row per turn).
+
+    The browser used to be the only place a CFO conversation existed, so every
+    request reached the model with a single message and follow-up questions lost
+    their meaning.  Rows are scoped by both ``user_id`` and ``conversation_id``:
+    a conversation id alone never grants access to another user's transcript.
+    """
+
+    __tablename__ = "cfo_chat_messages"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    conversation_id = Column(String(64), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.user_id"), nullable=False, index=True)
+    role = Column(String(20), nullable=False)  # "user" | "assistant"
+    content = Column(Text, nullable=False)
+    intent = Column(String(40), nullable=True)  # balance | transaction_summary | transfer | ...
+    message_metadata = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class BillFlowImport(Base):
     """Imported bank CSV metadata for the BillFlow local ledger."""
 

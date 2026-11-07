@@ -12,6 +12,7 @@ from app.dependencies import get_current_user
 from app.services.embeddings import VectorStore
 from app.services.llm_factory import get_embedding_client, get_llm_client
 from app.services.mode_service import resolve_mode
+from app.services.cfo_conversation import detect_language
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["ask-cfo"])
@@ -152,8 +153,12 @@ Tone:
 - Data-driven and fact-based
 - Focused on practical outcomes
 
+Language:
+- Always answer in the same language as the CEO's latest question (English or Chinese)
+- Do not switch languages unless the CEO asks you to
+
 Greeting:
-If the user greets you (e.g., "hello", "hi", "good morning", "hey"), respond with a brief professional greeting and offer to help with financial analysis questions. Do not provide unsolicited financial insights for a greeting.
+If the user greets you (e.g., "hello", "hi", "good morning", "hey", "你好", "您好"), respond with a brief professional greeting and offer to help with financial analysis questions. Do not provide unsolicited financial insights for a greeting.
 
 Risk detection:
 If the question relates to financial risks (low runway, high debt, low margin, etc.), always highlight the risk level and severity.
@@ -275,7 +280,7 @@ def _build_agentcfo_context_prompt(
     history_lines = []
     if chat_history:
         history_lines = ["Previous Conversation:", "=" * 70, ""]
-        for msg in chat_history[-6:]:  # Keep last 6 turns to avoid token overflow
+        for msg in chat_history[-12:]:  # Keep recent turns to avoid token overflow
             role = "CEO" if msg.role == "user" else "AgentCFO"
             history_lines.append(f"{role}: {msg.content}")
         history_lines.append("")
@@ -380,7 +385,7 @@ async def ask_cfo(
             models.ChatMessage.status == "complete",
         )
         .order_by(models.ChatMessage.id.desc())
-        .limit(12)
+        .limit(24)
         .all()
     )
     chat_history = [
@@ -396,9 +401,16 @@ async def ask_cfo(
     GREETING_WORDS = {
         "hello", "hi", "hey", "good morning", "good afternoon",
         "good evening", "hi there", "hello there", "greetings",
+        "你好", "您好", "嗨", "早上好", "下午好", "晚上好",
     }
     if request.question.strip().lower() in GREETING_WORDS:
-        greeting = "Hello! I am AgentCFO, your AI Chief Financial Officer. I can help you analyze financial reports, review cash flow, assess risks, and answer questions about your business finances. Upload a document and run an analysis to get started."
+        if detect_language(request.question) == "zh":
+            greeting = (
+                "你好！我是 AgentCFO，你的 AI 首席财务官。我可以帮你分析财务报告、"
+                "检查现金流、评估风险并回答企业财务问题。请上传文件并运行分析后开始。"
+            )
+        else:
+            greeting = "Hello! I am AgentCFO, your AI Chief Financial Officer. I can help you analyze financial reports, review cash flow, assess risks, and answer questions about your business finances. Upload a document and run an analysis to get started."
         user_message.status = "complete"
         assistant_message = models.ChatMessage(
             analysis_id=request.analysis_id,

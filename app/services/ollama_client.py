@@ -98,8 +98,15 @@ class OllamaClient:
         temperature: float = 0.3,
         max_tokens: int = 2000,
         reasoning_effort: str = "medium",
+        json_mode: bool = False,
     ) -> Dict[str, Any]:
-        """Call Ollama /api/chat and return parsed JSON or raw text dict."""
+        """Call Ollama /api/chat and return parsed JSON or raw text dict.
+
+        ``json_mode`` asks Ollama to constrain the reply to a JSON object.  The
+        intent interpreter and the banking-operations selector need that: a small
+        local model otherwise wraps the object in prose often enough to make
+        follow-up handling unreliable.
+        """
         del reasoning_effort  # unused; kept for NovaClient signature parity
 
         payload = {
@@ -114,6 +121,8 @@ class OllamaClient:
                 {"role": "user", "content": prompt or ""},
             ],
         }
+        if json_mode:
+            payload["format"] = "json"
 
         for attempt in range(settings.max_retries):
             try:

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowUpRight, FileSearch, Repeat2, Send, Sparkles } from 'lucide-react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { useLanguage } from '../context/LanguageContext.jsx'
-import { approveSandboxTransfer, chatWithCfoAi, getContacts } from '../services/api.js'
+import { approveSandboxTransfer, chatWithCfoAi, getCfoConversation, getContacts } from '../services/api.js'
 import { refreshDemoBankData } from '../services/useDemoBankData.js'
 
 const suggestions = [
@@ -54,13 +54,46 @@ function saveChatHistory(storageKey, messages) {
   }
 }
 
+function loadConversationId(storageKey) {
+  if (!storageKey) return null
+  try {
+    return localStorage.getItem(storageKey) || null
+  } catch {
+    return null
+  }
+}
+
+function saveConversationId(storageKey, conversationId) {
+  if (!storageKey || !conversationId) return
+  try {
+    localStorage.setItem(storageKey, conversationId)
+  } catch (error) {
+    console.error('Could not save the FINN conversation id.', error)
+  }
+}
+
+function serverMessageToUi(message) {
+  const timestamp = new Date(message.created_at).getTime()
+  return {
+    id: `server-${message.id}`,
+    role: message.role,
+    text: message.content,
+    timestamp: Number.isFinite(timestamp) ? timestamp : Date.now(),
+    transferPreview: null,
+    transferActionExpired: false,
+  }
+}
+
 export default function CfoChatPage({ onNotice, isActive = true }) {
   const { token, user } = useAuth()
   const { t, language } = useLanguage()
   const userId = user?.user_id || user?.id || user?.email
   const historyKey = userId ? `finn-chat-history:${encodeURIComponent(userId)}` : null
+  const conversationKey = userId ? `finn-chat-conversation:${encodeURIComponent(userId)}` : null
   const [messages, setMessages] = useState(() => loadChatHistory(historyKey))
   const [historyOwner, setHistoryOwner] = useState(historyKey)
+  const [conversationId, setConversationId] = useState(() => loadConversationId(conversationKey))
+  const [conversationOwner, setConversationOwner] = useState(conversationKey)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [mfaCodes, setMfaCodes] = useState({})
@@ -69,6 +102,7 @@ export default function CfoChatPage({ onNotice, isActive = true }) {
   const [mentionQuery, setMentionQuery] = useState(null)
   const [selectedRecipient, setSelectedRecipient] = useState(null)
   const threadRef = useRef(null)
+  const messagesRef = useRef(messages)
   const [welcomeTime] = useState(() => Date.now())
 
   useEffect(() => {
@@ -97,6 +131,38 @@ export default function CfoChatPage({ onNotice, isActive = true }) {
   }, [historyKey, historyOwner])
 
   useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
+
+  useEffect(() => {
+    if (conversationOwner === conversationKey) return
+    setConversationOwner(conversationKey)
+    setConversationId(loadConversationId(conversationKey))
+  }, [conversationKey, conversationOwner])
+
+  // The backend keeps the durable transcript so the model sees earlier turns.
+  // Local storage stays the offline fallback and keeps pending transfer actions.
+  useEffect(() => {
+    if (!isActive || !token) return undefined
+    let active = true
+    getCfoConversation(token, conversationId)
+      .then((result) => {
+        if (!active || !result) return
+        if (result.conversation_id && result.conversation_id !== conversationId) {
+          setConversationId(result.conversation_id)
+          saveConversationId(conversationKey, result.conversation_id)
+        }
+        if (!messagesRef.current.length && Array.isArray(result.messages) && result.messages.length) {
+          setMessages(result.messages.map(serverMessageToUi))
+        }
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [isActive, token, conversationId, conversationKey])
+
+  useEffect(() => {
     if (historyOwner === historyKey) saveChatHistory(historyKey, messages)
   }, [historyKey, historyOwner, messages])
 
@@ -114,6 +180,12 @@ export default function CfoChatPage({ onNotice, isActive = true }) {
       input.style.height = `${Math.min(input.scrollHeight, 112)}px`
       input.focus()
     }
+  }
+
+  function rememberConversation(result) {
+    if (!result?.conversation_id) return
+    setConversationId(result.conversation_id)
+    saveConversationId(conversationKey, result.conversation_id)
   }
 
   function assistantMessage(result, originalText, recipientCustomerId = null) {
@@ -146,6 +218,7 @@ export default function CfoChatPage({ onNotice, isActive = true }) {
     try {
       const result = await chatWithCfoAi(message.transferAction.originalText, token, {
         confirmed: true,
+        ...(conversationId ? { conversation_id: conversationId } : {}),
         ...(message.transferAction.recipientCustomerId ? { recipient_customer_id: message.transferAction.recipientCustomerId } : {}),
         ...(message.transferAction.confirmationId ? { confirmation_id: message.transferAction.confirmationId } : {}),
         ...(message.transferAction.requiresMfa ? {
@@ -153,6 +226,7 @@ export default function CfoChatPage({ onNotice, isActive = true }) {
           mfa_code: code,
         } : {}),
       })
+      rememberConversation(result)
       setMessages((current) => [...current, assistantMessage(
         result,
         message.transferAction.originalText,
@@ -201,9 +275,11 @@ export default function CfoChatPage({ onNotice, isActive = true }) {
     if (input) input.style.height = '38px'
     setSending(true)
     try {
-      const result = await chatWithCfoAi(message, token, recipientCustomerId
-        ? { recipient_customer_id: recipientCustomerId }
-        : {})
+      const result = await chatWithCfoAi(message, token, {
+        ...(recipientCustomerId ? { recipient_customer_id: recipientCustomerId } : {}),
+        ...(conversationId ? { conversation_id: conversationId } : {}),
+      })
+      rememberConversation(result)
       setMessages((current) => [...current, assistantMessage(result, message, recipientCustomerId)])
     } catch (error) {
       setMessages((current) => [...current, {
